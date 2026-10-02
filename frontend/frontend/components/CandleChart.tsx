@@ -9,6 +9,8 @@ import {
   UTCTimestamp,
   createSeriesMarkers,
   CrosshairMode,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
 } from "lightweight-charts";
 import { API_BASE_URL } from "@/lib/api";
 
@@ -204,7 +206,7 @@ export default function CandleChart({
 
     chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
 
-    let markerApi: ReturnType<typeof createSeriesMarkers> | null = null;
+    let markerApi: ISeriesMarkersPluginApi<UTCTimestamp> | null = null;
     let latestRows: Candle[] = [];
 
     chart.subscribeCrosshairMove((param) => {
@@ -245,7 +247,7 @@ export default function CandleChart({
         })));
 
         const lastFive = new Set(visiblePatterns.slice(-5).map((p) => `${p.time}-${p.name}`));
-        const markers = visiblePatterns.map((pattern) => {
+        const markers: SeriesMarker<UTCTimestamp>[] = visiblePatterns.map((pattern) => {
           const style = styleOf(pattern);
           return {
             time: toIstanbulChartTime(pattern.time),
