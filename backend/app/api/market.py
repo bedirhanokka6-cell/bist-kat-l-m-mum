@@ -518,589 +518,303 @@ def trend_before(
 # YARDIMCILAR
 # =========================================================
 
-def strong_body(
-    candle,
-    minimum=0.50,
-):
-    return (
-        candle["body_ratio"]
-        >= minimum
-    )
+DOJI_BODY_RATIO_MAX = 0.10
+EPSILON = 1e-9
+
+
+def clamp(value, minimum=0.0, maximum=1.0):
+    return max(minimum, min(maximum, value))
+
+
+def strong_body(candle, minimum=0.50):
+    return candle["body_ratio"] >= minimum
 
 
 def midpoint(candle):
-    return (
-        candle["open"]
-        + candle["close"]
-    ) / 2
+    return (candle["open"] + candle["close"]) / 2
+
+
+def recent_median_range(candles, index, lookback=12):
+    start = max(0, index - lookback)
+    values = [
+        candle_info(c)["range"]
+        for c in candles[start:index]
+        if candle_info(c)["range"] > EPSILON
+    ]
+    return median(values) if values else None
+
+
+def meaningful_range(candles, index, current):
+    """Aşırı küçük / veri gürültüsü niteliğindeki mumları süzer.
+
+    Sadece mum verisi kullanılır; RSI/EMA gibi indikatör eklenmez.
+    """
+    med = recent_median_range(candles, index)
+    if med is None or med <= EPSILON:
+        return current["range"] > EPSILON
+    return current["range"] >= med * 0.35
+
+
+def range_significance(candles, index, current):
+    med = recent_median_range(candles, index)
+    if med is None or med <= EPSILON:
+        return 1.0
+    return clamp(current["range"] / med, 0.0, 1.5) / 1.5
+
+
+def quality_label(score):
+    if score >= 85:
+        return "Çok Yüksek"
+    if score >= 75:
+        return "Yüksek"
+    if score >= 65:
+        return "Orta"
+    return "Düşük"
+
+
+def pattern_result(name, direction, score, reasons):
+    score = int(round(clamp(float(score), 0.0, 100.0)))
+    return {
+        "name": name,
+        "direction": direction,
+        "quality_score": score,
+        "quality_label": quality_label(score),
+        "reasons": reasons,
+    }
 
 
 # =========================================================
-# FORMASYON MOTORU
+# FORMASYON MOTORU V2
 # =========================================================
 
-def detect_patterns_at(
-    candles,
-    index,
-):
+def detect_patterns_at(candles, index):
+    """Saf mum geometrisi + önceki mumların fiyat bağlamıyla formasyon tespiti.
 
+    V2 hedefleri:
+    - Kapanmış mum kontrolü scan_all_patterns içinde zorunludur.
+    - Doji eşiği %10 gövde/aralık oranıdır.
+    - Aşırı küçük/gürültü mumları elenir.
+    - Dönüş formasyonlarında önceki trend zorunlu tutulur.
+    - Aynı geometrinin bağlama göre farklı adlandırılması korunur.
+    - Her tespitte 0-100 kalite puanı ve kısa gerekçe döner.
+    """
     found = []
+    current = candle_info(candles[index])
+    previous = candle_info(candles[index - 1]) if index >= 1 else None
+    third = candle_info(candles[index - 2]) if index >= 2 else None
+    prior_trend = trend_before(candles, index, 5)
 
-    current = candle_info(
-        candles[index]
-    )
+    if not meaningful_range(candles, index, current):
+        return found
 
-    previous = (
-        candle_info(
-            candles[index - 1]
-        )
-        if index >= 1
-        else None
-    )
+    significance = range_significance(candles, index, current)
 
-    third = (
-        candle_info(
-            candles[index - 2]
-        )
-        if index >= 2
-        else None
-    )
-
-    prior_trend = trend_before(
-        candles,
-        index,
-        5,
-    )
-
-
-    # =====================================================
+    # -----------------------------------------------------
     # DOJI AİLESİ
-    # =====================================================
+    # -----------------------------------------------------
+    is_doji = current["body_ratio"] <= DOJI_BODY_RATIO_MAX
+    if is_doji:
+        tiny_body_bonus = (1.0 - (current["body_ratio"] / DOJI_BODY_RATIO_MAX)) * 20
+        common_score = 60 + tiny_body_bonus + significance * 10
 
-    # Doji: gövde toplam mum aralığının en fazla %5'i.
-    if current["body_ratio"] <= 0.05:
+        if current["lower_ratio"] >= 0.60 and current["upper_ratio"] <= 0.12:
+            direction = "bullish" if prior_trend == "down" else "neutral"
+            score = common_score + 8 + (7 if prior_trend == "down" else 0)
+            found.append(pattern_result(
+                "Dragonfly Doji",
+                direction,
+                score,
+                ["Gövde çok küçük", "Alt fitil belirgin uzun", "Üst fitil kısa"]
+                + (["Öncesinde düşüş eğilimi"] if prior_trend == "down" else []),
+            ))
 
-        # DRAGONFLY DOJI
-        # Açılış/kapanış tepeye yakın, uzun alt fitil.
-        # Düşüş trendinden sonra daha anlamlı bir yükseliş dönüş sinyalidir.
-        if (
-            current["lower_ratio"] >= 0.65
-            and current["upper_ratio"] <= 0.10
-        ):
-            found.append(
-                {
-                    "name": "Dragonfly Doji",
-                    "direction": (
-                        "bullish"
-                        if prior_trend == "down"
-                        else "neutral"
-                    ),
-                }
-            )
+        elif current["upper_ratio"] >= 0.60 and current["lower_ratio"] <= 0.12:
+            direction = "bearish" if prior_trend == "up" else "neutral"
+            score = common_score + 8 + (7 if prior_trend == "up" else 0)
+            found.append(pattern_result(
+                "Gravestone Doji",
+                direction,
+                score,
+                ["Gövde çok küçük", "Üst fitil belirgin uzun", "Alt fitil kısa"]
+                + (["Öncesinde yükseliş eğilimi"] if prior_trend == "up" else []),
+            ))
 
-        # GRAVESTONE DOJI
-        # Açılış/kapanış dibe yakın, uzun üst fitil.
-        # Yükseliş trendinden sonra daha anlamlı bir düşüş dönüş sinyalidir.
-        elif (
-            current["upper_ratio"] >= 0.65
-            and current["lower_ratio"] <= 0.10
-        ):
-            found.append(
-                {
-                    "name": "Gravestone Doji",
-                    "direction": (
-                        "bearish"
-                        if prior_trend == "up"
-                        else "neutral"
-                    ),
-                }
-            )
+        elif current["upper_ratio"] >= 0.28 and current["lower_ratio"] >= 0.28:
+            score = common_score + 7
+            found.append(pattern_result(
+                "Long-Legged Doji",
+                "neutral",
+                score,
+                ["Gövde çok küçük", "Üst ve alt fitiller belirgin"],
+            ))
 
-        # LONG-LEGGED DOJI
-        # Hem üst hem alt fitil belirgin.
-        elif (
-            current["upper_ratio"] >= 0.30
-            and current["lower_ratio"] >= 0.30
-        ):
-            found.append(
-                {
-                    "name": "Long-Legged Doji",
-                    "direction": "neutral",
-                }
-            )
-
-        # NORMAL DOJI
         else:
-            found.append(
-                {
-                    "name": "Doji",
-                    "direction": "neutral",
-                }
-            )
+            found.append(pattern_result(
+                "Doji",
+                "neutral",
+                common_score,
+                ["Açılış ve kapanış birbirine çok yakın"],
+            ))
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # HAMMER / HANGING MAN
-    # =====================================================
-
+    # Doji ile çakışmaması için gövde %10'dan büyük olmalı.
+    # -----------------------------------------------------
     hammer_shape = (
-
-        # Alt fitil gövdenin en az 2.5 katı.
-        current["lower"]
-        >= current["body"] * 2.5
-
-        # Alt fitil mumun en az %55'i.
-        and current["lower_ratio"]
-        >= 0.55
-
-        # Üst fitil küçük olmalı.
-        and current["upper_ratio"]
-        <= 0.15
-
-        # Gövde çok büyük olmamalı.
-        and current["body_ratio"]
-        <= 0.35
-
-        # Gövde mumun üst kısmında olmalı.
-        and current["body_top"]
-        >= (
-            current["low"]
-            + current["range"] * 0.70
-        )
+        current["body_ratio"] > DOJI_BODY_RATIO_MAX
+        and current["body_ratio"] <= 0.35
+        and current["lower"] >= max(current["body"] * 2.0, EPSILON)
+        and current["lower_ratio"] >= 0.55
+        and current["upper_ratio"] <= 0.12
+        and current["body_top"] >= current["low"] + current["range"] * 0.68
     )
 
-    if hammer_shape:
-
+    if hammer_shape and prior_trend in {"down", "up"}:
+        shape_score = 58 + clamp(current["lower_ratio"] / 0.75, 0, 1) * 15 + significance * 7
         if prior_trend == "down":
+            found.append(pattern_result(
+                "Hammer", "bullish", shape_score + 15,
+                ["Uzun alt fitil", "Küçük üst fitil", "Gövde mumun üst bölümünde", "Öncesinde düşüş eğilimi"],
+            ))
+        else:
+            found.append(pattern_result(
+                "Hanging Man", "bearish", shape_score + 15,
+                ["Uzun alt fitil", "Küçük üst fitil", "Gövde mumun üst bölümünde", "Öncesinde yükseliş eğilimi"],
+            ))
 
-            found.append(
-                {
-                    "name": "Hammer",
-                    "direction": "bullish",
-                }
-            )
-
-        elif prior_trend == "up":
-
-            found.append(
-                {
-                    "name": "Hanging Man",
-                    "direction": "bearish",
-                }
-            )
-
-
-    # =====================================================
+    # -----------------------------------------------------
     # INVERTED HAMMER / SHOOTING STAR
-    # =====================================================
-
+    # -----------------------------------------------------
     inverted_shape = (
-
-        current["upper"]
-        >= current["body"] * 2.5
-
-        and current["upper_ratio"]
-        >= 0.55
-
-        and current["lower_ratio"]
-        <= 0.15
-
-        and current["body_ratio"]
-        <= 0.35
-
-        # Gövde mumun alt kısmında.
-        and current["body_bottom"]
-        <= (
-            current["low"]
-            + current["range"] * 0.30
-        )
+        current["body_ratio"] > DOJI_BODY_RATIO_MAX
+        and current["body_ratio"] <= 0.35
+        and current["upper"] >= max(current["body"] * 2.0, EPSILON)
+        and current["upper_ratio"] >= 0.55
+        and current["lower_ratio"] <= 0.12
+        and current["body_bottom"] <= current["low"] + current["range"] * 0.32
     )
 
-    if inverted_shape:
-
+    if inverted_shape and prior_trend in {"down", "up"}:
+        shape_score = 58 + clamp(current["upper_ratio"] / 0.75, 0, 1) * 15 + significance * 7
         if prior_trend == "down":
+            found.append(pattern_result(
+                "Inverted Hammer", "bullish", shape_score + 15,
+                ["Uzun üst fitil", "Küçük alt fitil", "Gövde mumun alt bölümünde", "Öncesinde düşüş eğilimi"],
+            ))
+        else:
+            found.append(pattern_result(
+                "Shooting Star", "bearish", shape_score + 15,
+                ["Uzun üst fitil", "Küçük alt fitil", "Gövde mumun alt bölümünde", "Öncesinde yükseliş eğilimi"],
+            ))
 
-            found.append(
-                {
-                    "name": "Inverted Hammer",
-                    "direction": "bullish",
-                }
-            )
-
-        elif prior_trend == "up":
-
-            found.append(
-                {
-                    "name": "Shooting Star",
-                    "direction": "bearish",
-                }
-            )
-
-
-    # =====================================================
-    # BULLISH ENGULFING
-    # =====================================================
-
+    # -----------------------------------------------------
+    # ENGULFING
+    # -----------------------------------------------------
     if previous:
-
-        bullish_engulfing = (
-
-            prior_trend == "down"
-
-            and previous["bearish"]
-
-            and current["bullish"]
-
-            # Önceki mum çok küçük olmasın.
-            and previous["body_ratio"]
-            >= 0.20
-
-            # Yeni mum güçlü olsun.
-            and current["body_ratio"]
-            >= 0.35
-
-            # Yeni gövde önceki gövdeyi yutsun.
-            and current["body_bottom"]
-            <= previous["body_bottom"]
-
-            and current["body_top"]
-            >= previous["body_top"]
-
-            # Yeni gövde en az önceki kadar büyük.
-            and current["body"]
-            >= previous["body"]
+        prev_body_ok = previous["body_ratio"] >= 0.20
+        current_body_ok = current["body_ratio"] >= 0.35
+        engulfs = (
+            current["body_bottom"] <= previous["body_bottom"]
+            and current["body_top"] >= previous["body_top"]
+            and current["body"] >= previous["body"] * 1.05
         )
 
-        if bullish_engulfing:
+        if prior_trend == "down" and previous["bearish"] and current["bullish"] and prev_body_ok and current_body_ok and engulfs:
+            size_ratio = current["body"] / max(previous["body"], EPSILON)
+            score = 68 + clamp((size_ratio - 1.05) / 0.95, 0, 1) * 12 + significance * 5 + 15
+            found.append(pattern_result(
+                "Bullish Engulfing", "bullish", score,
+                ["Yeşil gövde önceki kırmızı gövdeyi tamamen yutuyor", "Yeni gövde en az %5 daha büyük", "Öncesinde düşüş eğilimi"],
+            ))
 
-            found.append(
-                {
-                    "name": "Bullish Engulfing",
-                    "direction": "bullish",
-                }
-            )
+        if prior_trend == "up" and previous["bullish"] and current["bearish"] and prev_body_ok and current_body_ok and engulfs:
+            size_ratio = current["body"] / max(previous["body"], EPSILON)
+            score = 68 + clamp((size_ratio - 1.05) / 0.95, 0, 1) * 12 + significance * 5 + 15
+            found.append(pattern_result(
+                "Bearish Engulfing", "bearish", score,
+                ["Kırmızı gövde önceki yeşil gövdeyi tamamen yutuyor", "Yeni gövde en az %5 daha büyük", "Öncesinde yükseliş eğilimi"],
+            ))
 
-
-    # =====================================================
-    # BEARISH ENGULFING
-    # =====================================================
-
-    if previous:
-
-        bearish_engulfing = (
-
-            prior_trend == "up"
-
-            and previous["bullish"]
-
-            and current["bearish"]
-
-            and previous["body_ratio"]
-            >= 0.20
-
-            and current["body_ratio"]
-            >= 0.35
-
-            and current["body_bottom"]
-            <= previous["body_bottom"]
-
-            and current["body_top"]
-            >= previous["body_top"]
-
-            and current["body"]
-            >= previous["body"]
-        )
-
-        if bearish_engulfing:
-
-            found.append(
-                {
-                    "name": "Bearish Engulfing",
-                    "direction": "bearish",
-                }
-            )
-
-
-    # =====================================================
-    # MORNING STAR
-    # =====================================================
-
-    if (
-        third
-        and previous
-        and index >= 2
-    ):
-
-        trend_before_three = (
-            trend_before(
-                candles,
-                index - 2,
-                5,
-            )
+    # -----------------------------------------------------
+    # MORNING / EVENING STAR
+    # BIST'te gap zorunlu tutulmaz; üç mum geometrisi esas alınır.
+    # -----------------------------------------------------
+    if third and previous and index >= 2:
+        trend_before_three = trend_before(candles, index - 2, 5)
+        middle_small = (
+            previous["body"] <= third["body"] * 0.45
+            and previous["body_ratio"] <= 0.35
         )
 
         morning_star = (
-
-            trend_before_three
-            == "down"
-
-            # İlk mum güçlü kırmızı.
-            and third["bearish"]
-
-            and strong_body(
-                third,
-                0.50,
-            )
-
-            # Orta mum küçük.
-            and previous["body"]
-            <= third["body"] * 0.45
-
-            # Son mum güçlü yeşil.
-            and current["bullish"]
-
-            and strong_body(
-                current,
-                0.45,
-            )
-
-            # İlk mum gövdesinin ortasının üstünde kapanmalı.
-            and current["close"]
-            > midpoint(third)
+            trend_before_three == "down"
+            and third["bearish"] and strong_body(third, 0.50)
+            and middle_small
+            and current["bullish"] and strong_body(current, 0.45)
+            and current["close"] > midpoint(third)
         )
-
         if morning_star:
-
-            found.append(
-                {
-                    "name": "Morning Star",
-                    "direction": "bullish",
-                }
-            )
-
-
-    # =====================================================
-    # EVENING STAR
-    # =====================================================
-
-    if (
-        third
-        and previous
-        and index >= 2
-    ):
-
-        trend_before_three = (
-            trend_before(
-                candles,
-                index - 2,
-                5,
-            )
-        )
+            penetration = (current["close"] - midpoint(third)) / max(third["body"] / 2, EPSILON)
+            score = 76 + clamp(penetration, 0, 1) * 9 + significance * 5 + 10
+            found.append(pattern_result(
+                "Morning Star", "bullish", score,
+                ["Güçlü kırmızı ilk mum", "Küçük gövdeli orta mum", "Güçlü yeşil üçüncü mum", "İlk gövdenin orta noktasının üzerinde kapanış", "Öncesinde düşüş eğilimi"],
+            ))
 
         evening_star = (
-
-            trend_before_three
-            == "up"
-
-            and third["bullish"]
-
-            and strong_body(
-                third,
-                0.50,
-            )
-
-            and previous["body"]
-            <= third["body"] * 0.45
-
-            and current["bearish"]
-
-            and strong_body(
-                current,
-                0.45,
-            )
-
-            and current["close"]
-            < midpoint(third)
+            trend_before_three == "up"
+            and third["bullish"] and strong_body(third, 0.50)
+            and middle_small
+            and current["bearish"] and strong_body(current, 0.45)
+            and current["close"] < midpoint(third)
         )
-
         if evening_star:
+            penetration = (midpoint(third) - current["close"]) / max(third["body"] / 2, EPSILON)
+            score = 76 + clamp(penetration, 0, 1) * 9 + significance * 5 + 10
+            found.append(pattern_result(
+                "Evening Star", "bearish", score,
+                ["Güçlü yeşil ilk mum", "Küçük gövdeli orta mum", "Güçlü kırmızı üçüncü mum", "İlk gövdenin orta noktasının altında kapanış", "Öncesinde yükseliş eğilimi"],
+            ))
 
-            found.append(
-                {
-                    "name": "Evening Star",
-                    "direction": "bearish",
-                }
-            )
-
-
-    # =====================================================
-    # THREE WHITE SOLDIERS
-    # =====================================================
-
-    if (
-        third
-        and previous
-        and index >= 2
-    ):
-
-        trend_before_three = (
-            trend_before(
-                candles,
-                index - 2,
-                5,
-            )
-        )
+    # -----------------------------------------------------
+    # THREE WHITE SOLDIERS / THREE BLACK CROWS
+    # -----------------------------------------------------
+    if third and previous and index >= 2:
+        trend_before_three = trend_before(candles, index - 2, 5)
 
         three_white = (
-
-            trend_before_three
-            in {"down", "neutral"}
-
-            and third["bullish"]
-
-            and previous["bullish"]
-
-            and current["bullish"]
-
-            and strong_body(
-                third,
-                0.55,
-            )
-
-            and strong_body(
-                previous,
-                0.55,
-            )
-
-            and strong_body(
-                current,
-                0.55,
-            )
-
-            # Sürekli daha yüksek kapanış.
-            and previous["close"]
-            > third["close"]
-
-            and current["close"]
-            > previous["close"]
-
-            # Açılışlar önceki gövdenin içinde.
-            and previous["open"]
-            >= third["body_bottom"]
-
-            and previous["open"]
-            <= third["body_top"]
-
-            and current["open"]
-            >= previous["body_bottom"]
-
-            and current["open"]
-            <= previous["body_top"]
-
-            # Çok uzun üst fitiller olmasın.
-            and third["upper_ratio"]
-            <= 0.25
-
-            and previous["upper_ratio"]
-            <= 0.25
-
-            and current["upper_ratio"]
-            <= 0.25
+            trend_before_three in {"down", "neutral"}
+            and third["bullish"] and previous["bullish"] and current["bullish"]
+            and strong_body(third, 0.50) and strong_body(previous, 0.50) and strong_body(current, 0.50)
+            and previous["close"] > third["close"] and current["close"] > previous["close"]
+            and third["body_bottom"] <= previous["open"] <= third["body_top"]
+            and previous["body_bottom"] <= current["open"] <= previous["body_top"]
+            and third["upper_ratio"] <= 0.22 and previous["upper_ratio"] <= 0.22 and current["upper_ratio"] <= 0.22
+            and previous["body"] >= third["body"] * 0.50
+            and current["body"] >= previous["body"] * 0.50
         )
-
         if three_white:
-
-            found.append(
-                {
-                    "name": "Three White Soldiers",
-                    "direction": "bullish",
-                }
-            )
-
-
-    # =====================================================
-    # THREE BLACK CROWS
-    # =====================================================
-
-    if (
-        third
-        and previous
-        and index >= 2
-    ):
-
-        trend_before_three = (
-            trend_before(
-                candles,
-                index - 2,
-                5,
-            )
-        )
+            found.append(pattern_result(
+                "Three White Soldiers", "bullish", 88 + significance * 8,
+                ["Ardışık üç güçlü yeşil mum", "Kapanışlar sürekli yükseliyor", "Açılışlar önceki gövde içinde", "Üst fitiller sınırlı"],
+            ))
 
         three_black = (
-
-            trend_before_three
-            in {"up", "neutral"}
-
-            and third["bearish"]
-
-            and previous["bearish"]
-
-            and current["bearish"]
-
-            and strong_body(
-                third,
-                0.55,
-            )
-
-            and strong_body(
-                previous,
-                0.55,
-            )
-
-            and strong_body(
-                current,
-                0.55,
-            )
-
-            # Sürekli daha düşük kapanış.
-            and previous["close"]
-            < third["close"]
-
-            and current["close"]
-            < previous["close"]
-
-            # Açılışlar önceki gövdenin içinde.
-            and previous["open"]
-            >= third["body_bottom"]
-
-            and previous["open"]
-            <= third["body_top"]
-
-            and current["open"]
-            >= previous["body_bottom"]
-
-            and current["open"]
-            <= previous["body_top"]
-
-            # Uzun alt fitil olmasın.
-            and third["lower_ratio"]
-            <= 0.25
-
-            and previous["lower_ratio"]
-            <= 0.25
-
-            and current["lower_ratio"]
-            <= 0.25
+            trend_before_three in {"up", "neutral"}
+            and third["bearish"] and previous["bearish"] and current["bearish"]
+            and strong_body(third, 0.50) and strong_body(previous, 0.50) and strong_body(current, 0.50)
+            and previous["close"] < third["close"] and current["close"] < previous["close"]
+            and third["body_bottom"] <= previous["open"] <= third["body_top"]
+            and previous["body_bottom"] <= current["open"] <= previous["body_top"]
+            and third["lower_ratio"] <= 0.22 and previous["lower_ratio"] <= 0.22 and current["lower_ratio"] <= 0.22
+            and previous["body"] >= third["body"] * 0.50
+            and current["body"] >= previous["body"] * 0.50
         )
-
         if three_black:
-
-            found.append(
-                {
-                    "name": "Three Black Crows",
-                    "direction": "bearish",
-                }
-            )
+            found.append(pattern_result(
+                "Three Black Crows", "bearish", 88 + significance * 8,
+                ["Ardışık üç güçlü kırmızı mum", "Kapanışlar sürekli düşüyor", "Açılışlar önceki gövde içinde", "Alt fitiller sınırlı"],
+            ))
 
     return found
 
@@ -1205,6 +919,19 @@ def scan_all_patterns(
                     "close": candles[i][
                         "close"
                     ],
+
+                    "quality_score": pattern.get(
+                        "quality_score"
+                    ),
+
+                    "quality_label": pattern.get(
+                        "quality_label"
+                    ),
+
+                    "reasons": pattern.get(
+                        "reasons",
+                        [],
+                    ),
                 }
             )
 
