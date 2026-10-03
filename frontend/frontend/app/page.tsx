@@ -1405,6 +1405,25 @@ export default function Home() {
   }, [paperTrades]);
 
   const unreadNotificationCount = notificationEvents.reduce((sum, item) => sum + (item.read ? 0 : 1), 0);
+  const latestMarketCandle = marketSnapshot?.candles?.length
+    ? marketSnapshot.candles[marketSnapshot.candles.length - 1]
+    : null;
+  const previousMarketCandle = marketSnapshot?.candles && marketSnapshot.candles.length > 1
+    ? marketSnapshot.candles[marketSnapshot.candles.length - 2]
+    : null;
+  const marketVolume = latestMarketCandle?.volume ?? 0;
+  const marketRangePct = latestMarketCandle && latestMarketCandle.open
+    ? ((latestMarketCandle.high - latestMarketCandle.low) / latestMarketCandle.open) * 100
+    : null;
+  const selectedChange = changes[selected];
+  const momentumLabel = selectedChange == null
+    ? "Veri bekleniyor"
+    : selectedChange > 0.25
+      ? "Pozitif Momentum"
+      : selectedChange < -0.25
+        ? "Negatif Momentum"
+        : "Dengeli Seyir";
+  const momentumClass = selectedChange == null ? "neutral" : selectedChange > 0.25 ? "positive" : selectedChange < -0.25 ? "negative" : "neutral";
   const markAllNotificationsRead = useCallback(() => {
     setNotificationEvents((current) => current.map((item) => ({ ...item, read: true })));
   }, []);
@@ -1502,7 +1521,7 @@ export default function Home() {
         {activeView === "market" ? (
           <>
         <section className="workspace panel">
-          <div className="instrument-header">
+          <div className="instrument-header v21-instrument-header">
             <div className="instrument-identity">
               <div className="ticker-avatar">{selected.slice(0, 1)}</div>
               <div>
@@ -1511,6 +1530,7 @@ export default function Home() {
                   <button className={`favorite favorite-button ${favoriteSymbols.includes(selected) ? "active" : ""}`} onClick={() => toggleFavorite(selected)} title={favoriteSymbols.includes(selected) ? "Takip listesinden çıkar" : "Takip listesine ekle"}>{favoriteSymbols.includes(selected) ? "★" : "☆"}</button>
                 </div>
                 <p>{COMPANY_NAMES[selected] ?? selected}</p>
+                <div className="instrument-tags"><span>BIST Katılım 50</span><span>Hisse</span></div>
               </div>
             </div>
 
@@ -1519,7 +1539,19 @@ export default function Home() {
               <em className={`${(changes[selected] ?? 0) >= 0 ? "positive" : "negative"}`}>
                 {changes[selected] == null ? "—" : `${changes[selected]! >= 0 ? "+" : ""}${changes[selected]!.toFixed(2)}%`}
               </em>
-              <span>{marketSnapshot?.dataStatus === "stale" ? "Son başarılı veri" : "Veri akışı aktif"}</span>
+              <span>{marketSnapshot?.lastCandleTime ? new Date(marketSnapshot.lastCandleTime * 1000).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "Veri bekleniyor"}</span>
+            </div>
+
+            <div className="instrument-quick-stats">
+              <div><span>Hacim</span><strong>{marketVolume ? `${(marketVolume / 1_000_000).toFixed(2)}M` : "—"}</strong></div>
+              <div><span>Gün Aralığı</span><strong>{latestMarketCandle ? `${latestMarketCandle.low.toFixed(2)} – ${latestMarketCandle.high.toFixed(2)}` : "—"}</strong></div>
+              <div><span>Mum Aralığı</span><strong>{marketRangePct == null ? "—" : `%${marketRangePct.toFixed(2)}`}</strong></div>
+            </div>
+
+            <div className={`momentum-card ${momentumClass}`}>
+              <b>{momentumClass === "positive" ? "↗" : momentumClass === "negative" ? "↘" : "→"}</b>
+              <strong>{momentumLabel}</strong>
+              <small>{selectedChange == null ? "Piyasa verisi bekleniyor." : selectedChange > 0.25 ? "Günlük fiyat hareketi pozitif." : selectedChange < -0.25 ? "Günlük fiyat hareketi negatif." : "Fiyat hareketi dengeli."}</small>
             </div>
 
             <div className="chart-controls">
@@ -1626,6 +1658,15 @@ export default function Home() {
                 <span>⛶</span>
               </div>
             </div>
+          </div>
+          <div className="v21-market-metrics">
+            <div><span>Açılış</span><strong>{latestMarketCandle ? `₺${latestMarketCandle.open.toFixed(2)}` : "—"}</strong></div>
+            <div><span>Yüksek</span><strong className="positive">{latestMarketCandle ? `₺${latestMarketCandle.high.toFixed(2)}` : "—"}</strong></div>
+            <div><span>Düşük</span><strong className="negative">{latestMarketCandle ? `₺${latestMarketCandle.low.toFixed(2)}` : "—"}</strong></div>
+            <div><span>Kapanış</span><strong>{latestMarketCandle ? `₺${latestMarketCandle.close.toFixed(2)}` : "—"}</strong></div>
+            <div><span>Önceki Kapanış</span><strong>{previousMarketCandle ? `₺${previousMarketCandle.close.toFixed(2)}` : "—"}</strong></div>
+            <div><span>Hacim</span><strong>{marketVolume ? `${(marketVolume / 1_000_000).toFixed(2)}M` : "—"}</strong></div>
+            <div><span>Günlük Değişim</span><strong className={(changes[selected] ?? 0) >= 0 ? "positive" : "negative"}>{changes[selected] == null ? "—" : `${changes[selected]! >= 0 ? "+" : ""}${changes[selected]!.toFixed(2)}%`}</strong></div>
           </div>
         </section>
 
