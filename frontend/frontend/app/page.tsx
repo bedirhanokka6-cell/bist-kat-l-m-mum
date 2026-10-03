@@ -280,6 +280,12 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [activeView, setActiveView] = useState<ActiveView>("market");
   const [scanTimeframe, setScanTimeframe] = useState("15m");
+  const [scanDirectionFilter, setScanDirectionFilter] = useState<"all" | Pattern["direction"]>("all");
+  const [scanStrengthFilter, setScanStrengthFilter] = useState<"all" | "strong" | "medium" | "weak" | "insufficient" | "neutral">("all");
+  const [scanPatternFilter, setScanPatternFilter] = useState("all");
+  const [scanMinSuccess, setScanMinSuccess] = useState(0);
+  const [scanMinSamples, setScanMinSamples] = useState(0);
+  const [scanSort, setScanSort] = useState<"strength" | "success" | "samples" | "newest" | "symbol">("strength");
   const [scanData, setScanData] = useState<ScanData | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -748,8 +754,7 @@ export default function Home() {
 
         if (!alreadyOpen) {
           const candidates = marketSnapshot.currentPatterns.filter(
-            (pattern): pattern is Pattern & { direction: "bullish" | "bearish" } =>
-              pattern.direction === "bullish" || pattern.direction === "bearish"
+            (pattern) => pattern.direction === "bullish" || pattern.direction === "bearish"
           );
 
           for (const pattern of candidates) {
@@ -1122,16 +1127,45 @@ export default function Home() {
   const scanRows = useMemo(() => {
     if (!scanData) return [];
     const priority: Record<string, number> = { strong: 6, medium: 5, weak: 4, insufficient: 3, neutral: 2, none: 1 };
-    return [...scanData.items].sort((a, b) => {
-      const aStrength = a.signal_strength?.label ?? (a.latest_patterns?.length ? "neutral" : "none");
-      const bStrength = b.signal_strength?.label ?? (b.latest_patterns?.length ? "neutral" : "none");
-      const byLabel = (priority[bStrength] ?? 0) - (priority[aStrength] ?? 0);
-      if (byLabel !== 0) return byLabel;
-      const byScore = (b.signal_strength?.score ?? 0) - (a.signal_strength?.score ?? 0);
-      if (byScore !== 0) return byScore;
+
+    const filtered = scanData.items.filter((item) => {
+      const latest = item.latest_patterns?.[item.latest_patterns.length - 1] ?? null;
+      const strength = item.signal_strength?.label ?? (latest ? "neutral" : "none");
+      const successRate = item.signal_strength?.success_rate ?? null;
+      const samples = item.signal_strength?.samples ?? 0;
+
+      if (scanDirectionFilter !== "all" && latest?.direction !== scanDirectionFilter) return false;
+      if (scanStrengthFilter !== "all" && strength !== scanStrengthFilter) return false;
+      if (scanPatternFilter !== "all" && latest?.name !== scanPatternFilter) return false;
+      if (scanMinSuccess > 0 && (successRate == null || successRate < scanMinSuccess)) return false;
+      if (scanMinSamples > 0 && samples < scanMinSamples) return false;
+      return true;
+    });
+
+    return filtered.sort((a, b) => {
+      if (scanSort === "success") {
+        const diff = (b.signal_strength?.success_rate ?? -1) - (a.signal_strength?.success_rate ?? -1);
+        if (diff !== 0) return diff;
+      } else if (scanSort === "samples") {
+        const diff = (b.signal_strength?.samples ?? 0) - (a.signal_strength?.samples ?? 0);
+        if (diff !== 0) return diff;
+      } else if (scanSort === "newest") {
+        const aTime = a.latest_patterns?.[a.latest_patterns.length - 1]?.time ?? 0;
+        const bTime = b.latest_patterns?.[b.latest_patterns.length - 1]?.time ?? 0;
+        if (bTime !== aTime) return bTime - aTime;
+      } else if (scanSort === "symbol") {
+        return a.symbol.localeCompare(b.symbol);
+      } else {
+        const aStrength = a.signal_strength?.label ?? (a.latest_patterns?.length ? "neutral" : "none");
+        const bStrength = b.signal_strength?.label ?? (b.latest_patterns?.length ? "neutral" : "none");
+        const byLabel = (priority[bStrength] ?? 0) - (priority[aStrength] ?? 0);
+        if (byLabel !== 0) return byLabel;
+        const byScore = (b.signal_strength?.score ?? 0) - (a.signal_strength?.score ?? 0);
+        if (byScore !== 0) return byScore;
+      }
       return a.symbol.localeCompare(b.symbol);
     });
-  }, [scanData]);
+  }, [scanData, scanDirectionFilter, scanStrengthFilter, scanPatternFilter, scanMinSuccess, scanMinSamples, scanSort]);
 
   const watchRows = useMemo(() => {
     return favoriteSymbols.map((symbol) => {
@@ -1617,6 +1651,77 @@ export default function Home() {
               <span><b>Bildirim:</b> {notifyEnabled && notificationStatus === "granted" ? "Yeni güçlü sinyalde açık" : "Kapalı"}</span>
             </div>
 
+            <div className="scanner-filter-bar">
+              <label>
+                <span>Yön</span>
+                <select value={scanDirectionFilter} onChange={(e) => setScanDirectionFilter(e.target.value as "all" | Pattern["direction"])}>
+                  <option value="all">Tümü</option>
+                  <option value="bullish">Yükseliş</option>
+                  <option value="bearish">Düşüş</option>
+                  <option value="neutral">Nötr</option>
+                </select>
+              </label>
+              <label>
+                <span>Güç</span>
+                <select value={scanStrengthFilter} onChange={(e) => setScanStrengthFilter(e.target.value as typeof scanStrengthFilter)}>
+                  <option value="all">Tümü</option>
+                  <option value="strong">Güçlü</option>
+                  <option value="medium">Orta</option>
+                  <option value="weak">Zayıf</option>
+                  <option value="insufficient">Örnek Az</option>
+                  <option value="neutral">Nötr</option>
+                </select>
+              </label>
+              <label>
+                <span>Formasyon</span>
+                <select value={scanPatternFilter} onChange={(e) => setScanPatternFilter(e.target.value)}>
+                  <option value="all">Tümü</option>
+                  {ALL_PATTERN_NAMES.map((name) => <option key={name} value={name}>{patternTurkish(name)}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Min. başarı</span>
+                <select value={scanMinSuccess} onChange={(e) => setScanMinSuccess(Number(e.target.value))}>
+                  <option value={0}>Filtre yok</option>
+                  <option value={50}>%50+</option>
+                  <option value={55}>%55+</option>
+                  <option value={60}>%60+</option>
+                  <option value={65}>%65+</option>
+                  <option value={70}>%70+</option>
+                </select>
+              </label>
+              <label>
+                <span>Min. örnek</span>
+                <select value={scanMinSamples} onChange={(e) => setScanMinSamples(Number(e.target.value))}>
+                  <option value={0}>Filtre yok</option>
+                  <option value={10}>10+</option>
+                  <option value={20}>20+</option>
+                  <option value={25}>25+</option>
+                  <option value={30}>30+</option>
+                  <option value={50}>50+</option>
+                </select>
+              </label>
+              <label>
+                <span>Sırala</span>
+                <select value={scanSort} onChange={(e) => setScanSort(e.target.value as typeof scanSort)}>
+                  <option value="strength">Güç</option>
+                  <option value="success">Başarı oranı</option>
+                  <option value="samples">Örnek sayısı</option>
+                  <option value="newest">En yeni</option>
+                  <option value="symbol">Sembol</option>
+                </select>
+              </label>
+              <button className="scan-filter-reset" onClick={() => {
+                setScanDirectionFilter("all");
+                setScanStrengthFilter("all");
+                setScanPatternFilter("all");
+                setScanMinSuccess(0);
+                setScanMinSamples(0);
+                setScanSort("strength");
+              }}>Filtreleri Sıfırla</button>
+              <div className="scan-filter-result"><span>Gösterilen</span><strong>{scanRows.length}</strong></div>
+            </div>
+
             <div className="scan-summary-grid">
               <div><span>Taranan</span><strong>{scanData?.symbols_scanned ?? 0}/{STOCKS.length}</strong></div>
               <div><span>Formasyon çıkan</span><strong>{scanData?.symbols_with_signal ?? 0}</strong></div>
@@ -1670,7 +1775,7 @@ export default function Home() {
                 </tbody>
               </table>
             </div>
-            <p className="scanner-note">V11 otomatik tarama: Katılım 50 uygulama açıkken 5 dakikada bir yeniden taranır ve yalnızca önceki taramada olmayan yeni Güçlü yönlü sinyal için bildirim üretir. V10 doğrulama filtresi: Güçlü sinyal için en az 25 örnek, en az %60 geçmiş başarı, pozitif ortalama yönsel hareket, olumlu MFE/MAE dengesi ve +1/+2/+3 ufuklarının en az 2 tanesinde pozitif sonuç aranır. Sıralama yalnızca geçmiş veriyi özetler; al/sat tavsiyesi değildir. Yahoo Finance verisinin gerçek zaman garantisi yoktur ve formasyonlar yalnızca kapanmış mumlarda onaylanır.</p>
+            <p className="scanner-note">V18 Tarama V2: yön, formasyon, geçmiş güç, minimum başarı ve minimum örnek filtreleri aynı tarama sonucu üzerinde uygulanır; yeni API isteği oluşturmaz. “Güç” sıralaması yalnızca geçmiş kapanmış mum istatistiklerini özetler ve yatırım tavsiyesi değildir. Formasyonlar yalnızca kapanmış mumda onaylanır; Yahoo Finance verisinin gerçek zaman garantisi yoktur.</p>
           </section>
         ) : activeView === "watchlist" ? (
           <section className="wide-view panel favorites-view">

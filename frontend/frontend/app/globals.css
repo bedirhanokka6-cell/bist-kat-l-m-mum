@@ -1982,3 +1982,31 @@ body { min-height: 100dvh; overscroll-behavior-y: none; }
 @media (display-mode: standalone) {
   .topbar { background: rgba(4,15,27,.98); }
 }
+
+
+/* V18 — Tarama Ekranı V2 */
+.scanner-filter-bar {
+  display:grid;
+  grid-template-columns:repeat(6,minmax(120px,1fr)) auto minmax(92px,.7fr);
+  gap:8px;
+  align-items:end;
+  margin:0 0 10px;
+  padding:10px;
+  border:1px solid #153b58;
+  background:#071a29;
+  border-radius:9px;
+}
+.scanner-filter-bar label { display:flex; flex-direction:column; gap:5px; min-width:0; }
+.scanner-filter-bar label > span, .scan-filter-result span { color:#7fa3bc; font-size:11px; font-weight:700; }
+.scanner-filter-bar select {
+  width:100%; min-width:0; border:1px solid #1b4767; background:#061725; color:#d9edf9;
+  border-radius:7px; padding:7px 8px; outline:none; font-size:12px;
+}
+.scanner-filter-bar select:focus { border-color:#2588d8; box-shadow:0 0 0 2px rgba(37,136,216,.12); }
+.scan-filter-reset { border:1px solid #28506d; background:#0a2235; color:#c7e1f2; border-radius:7px; padding:8px 10px; cursor:pointer; font-weight:700; white-space:nowrap; }
+.scan-filter-reset:hover { border-color:#3b78a4; background:#0c2940; }
+.scan-filter-result { border:1px solid #1b4767; background:#061725; border-radius:7px; padding:6px 9px; display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:34px; }
+.scan-filter-result strong { color:#69c8ff; font-size:16px; }
+@media (max-width: 1350px) { .scanner-filter-bar { grid-template-columns:repeat(4,minmax(120px,1fr)); } }
+@media (max-width: 900px) { .scanner-filter-bar { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width: 560px) { .scanner-filter-bar { grid-template-columns:1fr; } }
