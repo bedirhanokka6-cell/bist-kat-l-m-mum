@@ -754,7 +754,8 @@ export default function Home() {
 
         if (!alreadyOpen) {
           const candidates = marketSnapshot.currentPatterns.filter(
-            (pattern) => pattern.direction === "bullish" || pattern.direction === "bearish"
+            (pattern): pattern is Pattern & { direction: "bullish" | "bearish" } =>
+              pattern.direction === "bullish" || pattern.direction === "bearish"
           );
 
           for (const pattern of candidates) {
