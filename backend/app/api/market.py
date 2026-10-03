@@ -1020,7 +1020,7 @@ def evaluate_pattern_context(candles, index, direction, timeframe, lookback=8):
 # FORMASYON BACKTEST
 # =========================================================
 
-def calculate_backtest(candles, patterns, timeframe):
+def calculate_backtest(candles, patterns, timeframe, event_since=None):
     """
     Her formasyon için sonraki 1, 2 ve 3 kapanmış mumdaki yön başarısını ölçer.
     Ortalama yönsel hareketin yanında MFE/MAE hesaplar:
@@ -1039,6 +1039,9 @@ def calculate_backtest(candles, patterns, timeframe):
     grouped = {}
 
     for pattern in patterns:
+        if event_since is not None and int(pattern.get("time", 0)) < int(event_since):
+            continue
+
         name = pattern["name"]
         direction = pattern["direction"]
         event_index = time_to_index.get(pattern["time"])
@@ -1702,6 +1705,10 @@ def get_candles(
     backtest: bool = Query(
         True
     ),
+
+    stats_window: str = Query(
+        "all"
+    ),
 ):
 
     symbol = (
@@ -1726,11 +1733,18 @@ def get_candles(
             detail="Geçersiz zaman dilimi",
         )
 
+    if stats_window not in {"all", "3m", "6m", "1y"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Geçersiz istatistik dönemi",
+        )
+
     cache_key = (
         f"{symbol}:"
         f"{timeframe}:"
         f"{limit}:"
-        f"backtest={backtest}"
+        f"backtest={backtest}:"
+        f"stats_window={stats_window}"
     )
 
     cached = cache_get(
@@ -1901,15 +1915,40 @@ def get_candles(
             and p["time"] == last_closed_time
         ]
 
+        backtest_window_days = {
+            "3m": 90,
+            "6m": 180,
+            "1y": 365,
+        }.get(stats_window)
+
+        backtest_event_since = None
+        if backtest_window_days and analysis_candles:
+            backtest_event_since = int(analysis_candles[-1]["time"]) - (backtest_window_days * 86400)
+
         backtest_result = (
             calculate_backtest(
                 analysis_candles,
                 analysis_patterns,
                 timeframe,
+                event_since=backtest_event_since,
             )
             if backtest
             else None
         )
+
+        if backtest_result is not None and analysis_candles:
+            available_from = int(analysis_candles[0]["time"])
+            available_to = int(analysis_candles[-1]["time"])
+            effective_from = max(available_from, backtest_event_since or available_from)
+            backtest_result.update({
+                "requested_window": stats_window,
+                "requested_days": backtest_window_days,
+                "available_from_time": available_from,
+                "available_to_time": available_to,
+                "effective_from_time": effective_from,
+                "available_days": round(max(0, available_to - available_from) / 86400, 1),
+                "effective_days": round(max(0, available_to - effective_from) / 86400, 1),
+            })
 
         result = {
             "symbol": symbol,
@@ -1956,11 +1995,11 @@ def get_candles(
 
         ttl = cache_seconds_for_timeframe(timeframe)
         cache_set(cache_key, result, ttl=ttl)
-        LAST_GOOD[(symbol, timeframe, backtest)] = result
+        LAST_GOOD[(symbol, timeframe, backtest, stats_window)] = result
         return result
 
     except HTTPException as e:
-        stale = LAST_GOOD.get((symbol, timeframe, backtest))
+        stale = LAST_GOOD.get((symbol, timeframe, backtest, stats_window))
         if stale:
             fallback = dict(stale)
             fallback["data_status"] = "stale"
@@ -1971,7 +2010,7 @@ def get_candles(
         raise
 
     except Exception as e:
-        stale = LAST_GOOD.get((symbol, timeframe, backtest))
+        stale = LAST_GOOD.get((symbol, timeframe, backtest, stats_window))
         if stale:
             fallback = dict(stale)
             fallback["data_status"] = "stale"

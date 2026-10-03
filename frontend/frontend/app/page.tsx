@@ -66,6 +66,7 @@ type BacktestHorizon = {
   avg_mae_pct?: number | null;
   context_samples?: number;
   context_success_rate?: number | null;
+  context_avg_directional_return_pct?: number | null;
 };
 
 type BacktestPattern = {
@@ -77,6 +78,15 @@ type BacktestPattern = {
 
 type BacktestData = {
   minimum_samples?: number;
+  candle_count?: number;
+  requested_window?: "all" | "3m" | "6m" | "1y";
+  requested_days?: number | null;
+  available_from_time?: number;
+  available_to_time?: number;
+  effective_from_time?: number;
+  available_days?: number;
+  effective_days?: number;
+  context?: { enabled?: boolean; lookback?: number; threshold_pct?: number; minimum_direction_steps?: number; description?: string };
   patterns: BacktestPattern[];
 };
 
@@ -301,6 +311,10 @@ export default function Home() {
   const [statsBacktest, setStatsBacktest] = useState<BacktestData | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsWindow, setStatsWindow] = useState<"all" | "3m" | "6m" | "1y">("all");
+  const [statsDirection, setStatsDirection] = useState<"all" | "bullish" | "bearish" | "neutral">("all");
+  const [statsMinSamples, setStatsMinSamples] = useState(20);
+  const [statsSort, setStatsSort] = useState<"score" | "success" | "samples" | "rr">("score");
   const [marketSnapshot, setMarketSnapshot] = useState<MarketSnapshot | null>(null);
   const [paperEnabled, setPaperEnabled] = useState(false);
   const [paperTrades, setPaperTrades] = useState<PaperTrade[]>([]);
@@ -924,7 +938,7 @@ export default function Home() {
       setStatsError(null);
       try {
         const response = await fetch(
-          `${API_BASE_URL}/api/market/candles/${selected}?timeframe=${timeframe}&limit=300&backtest=true`,
+          `${API_BASE_URL}/api/market/candles/${selected}?timeframe=${timeframe}&limit=300&backtest=true&stats_window=${statsWindow}`,
           { cache: "no-store", signal: controller.signal },
         );
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -945,7 +959,7 @@ export default function Home() {
       active = false;
       controller.abort();
     };
-  }, [activeView, selected, timeframe]);
+  }, [activeView, selected, timeframe, statsWindow]);
 
   const latestPattern = patterns.length ? patterns[patterns.length - 1] : null;
   const recentPatterns = [...patterns].reverse().slice(0, 4);
@@ -995,10 +1009,66 @@ export default function Home() {
     : "—";
 
   const activeStatsBacktest = statsBacktest ?? backtest;
+
+  const statsRankedPatterns = useMemo(() => {
+    const data = activeStatsBacktest;
+    if (!data) return [] as Array<{
+      row: BacktestPattern;
+      bestHorizon: "1" | "2" | "3" | null;
+      bestMetric: BacktestHorizon | null;
+      reliableHorizons: number;
+      consistency: number;
+      rr: number | null;
+      score: number;
+      grade: "A" | "B" | "C" | "D";
+    }>;
+
+    const minimum = Math.max(statsMinSamples, data.minimum_samples ?? 20);
+    const ranked = data.patterns.map((row) => {
+      const horizons = (["1", "2", "3"] as const)
+        .map((h) => ({ h, m: row.horizons?.[h] }))
+        .filter(({ m }) => !!m && m.samples >= minimum && m.success_rate != null);
+      const best = [...horizons].sort((a, b) => (b.m?.success_rate ?? 0) - (a.m?.success_rate ?? 0))[0] ?? null;
+      const bestMetric = best?.m ?? null;
+      const positive = horizons.filter(({ m }) => (m?.avg_directional_return_pct ?? 0) > 0).length;
+      const consistency = horizons.length ? positive / horizons.length : 0;
+      const mfe = bestMetric?.avg_mfe_pct ?? null;
+      const maeAbs = bestMetric?.avg_mae_pct == null ? null : Math.abs(bestMetric.avg_mae_pct);
+      const rr = mfe != null && maeAbs != null && maeAbs > 0 ? mfe / maeAbs : null;
+      const sampleQuality = bestMetric ? Math.min(1, bestMetric.samples / 60) : 0;
+      const success = (bestMetric?.success_rate ?? 0) / 100;
+      const directional = Math.max(0, Math.min(1, (bestMetric?.avg_directional_return_pct ?? 0) / 2));
+      const rrQuality = rr == null ? 0 : Math.min(1, rr / 2);
+      const contextRate = bestMetric?.context_success_rate ?? null;
+      const contextQuality = contextRate == null ? success : Math.max(0, Math.min(1, contextRate / 100));
+      const score = Math.round((success * 45 + consistency * 15 + sampleQuality * 15 + directional * 10 + rrQuality * 10 + contextQuality * 5) * 10) / 10;
+      const reliableHorizons = horizons.length;
+      const grade: "A" | "B" | "C" | "D" = score >= 70 && reliableHorizons >= 2 ? "A" : score >= 58 && reliableHorizons >= 2 ? "B" : score >= 45 && reliableHorizons >= 1 ? "C" : "D";
+      return { row, bestHorizon: best?.h ?? null, bestMetric, reliableHorizons, consistency, rr, score, grade };
+    });
+
+    return ranked
+      .filter((item) => statsDirection === "all" || item.row.direction === statsDirection)
+      .sort((a, b) => {
+        if (statsSort === "success") return (b.bestMetric?.success_rate ?? -1) - (a.bestMetric?.success_rate ?? -1);
+        if (statsSort === "samples") return (b.bestMetric?.samples ?? 0) - (a.bestMetric?.samples ?? 0);
+        if (statsSort === "rr") return (b.rr ?? -1) - (a.rr ?? -1);
+        return b.score - a.score;
+      });
+  }, [activeStatsBacktest, statsDirection, statsMinSamples, statsSort]);
+
   const statsSummary = useMemo(() => {
     const data = activeStatsBacktest;
-    if (!data) return { reliableHorizons: 0, totalSamples: 0, highestRate: null as number | null, avgDirectional: null as number | null };
-    const minimum = data.minimum_samples ?? 20;
+    if (!data) return {
+      reliableHorizons: 0,
+      totalSamples: 0,
+      highestRate: null as number | null,
+      avgDirectional: null as number | null,
+      topPattern: null as string | null,
+      topScore: null as number | null,
+      contextBest: null as number | null,
+    };
+    const minimum = Math.max(statsMinSamples, data.minimum_samples ?? 20);
     const reliableMetrics: BacktestHorizon[] = [];
     let totalSamples = 0;
     for (const pattern of data.patterns) {
@@ -1010,13 +1080,18 @@ export default function Home() {
     }
     const rates = reliableMetrics.map((m) => m.success_rate).filter((v): v is number => v != null);
     const directional = reliableMetrics.map((m) => m.avg_directional_return_pct).filter((v): v is number => v != null);
+    const contextRates = reliableMetrics.map((m) => m.context_success_rate).filter((v): v is number => v != null);
+    const top = statsRankedPatterns[0] ?? null;
     return {
       reliableHorizons: reliableMetrics.length,
       totalSamples,
       highestRate: rates.length ? Math.max(...rates) : null,
       avgDirectional: directional.length ? directional.reduce((a, b) => a + b, 0) / directional.length : null,
+      topPattern: top?.row.name ?? null,
+      topScore: top?.score ?? null,
+      contextBest: contextRates.length ? Math.max(...contextRates) : null,
     };
-  }, [activeStatsBacktest]);
+  }, [activeStatsBacktest, statsMinSamples, statsRankedPatterns]);
 
   const selectedPaperTrades = paperTrades.filter((trade) => trade.symbol === selected);
   const openPaperTrade = selectedPaperTrades.find(
@@ -1965,17 +2040,15 @@ export default function Home() {
             <p className="scanner-note">V14 Bildirim V2: otomatik Katılım 50 taramasında yeni Güçlü yönlü sinyal, sanal işlem açılışı, hedef, stop ve diğer kapanışlar kaydedilir. Tarayıcı bildirimi kapalı olsa bile uygulama içi geçmiş tutulur. Site tamamen kapalıyken arka planda bildirim için ileride sunucu scheduler/push altyapısı gerekir.</p>
           </section>
         ) : (
-          <section className="wide-view panel stats-view">
+          <section className="wide-view panel stats-view stats-v3-view">
             <div className="wide-view-header stats-v2-header">
               <div>
-                <h2>{selected} · İstatistik V2</h2>
-                <p>14 mum formasyonunun geçmiş sonuçları: başarı, ortalama/medyan yönsel hareket, MFE/MAE ve +1/+2/+3 mum karşılaştırması.</p>
+                <h2>{selected} · Backtest / İstatistik V3</h2>
+                <p>Formasyonları örnek sayısı, başarı, medyan hareket, MFE/MAE, bağlam başarısı ve ufuk tutarlılığıyla karşılaştırır.</p>
               </div>
               <div className="stats-v2-actions">
                 <div className="stats-timeframes">
-                  {[
-                    ["10 dk", "10m"], ["15 dk", "15m"], ["1 saat", "1h"], ["4 saat", "4h"], ["1 gün", "1d"],
-                  ].map(([label, value]) => (
+                  {[["10 dk", "10m"], ["15 dk", "15m"], ["1 saat", "1h"], ["4 saat", "4h"], ["1 gün", "1d"]].map(([label, value]) => (
                     <button key={value} className={timeframe === value ? "active" : ""} onClick={() => setTimeframe(value)}>{label}</button>
                   ))}
                 </div>
@@ -1983,60 +2056,92 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="stats-v2-summary">
+            <div className="stats-v3-controls">
+              <div className="stats-periods">
+                <span>Geçmiş dönem</span>
+                {[["Tümü", "all"], ["3 Ay", "3m"], ["6 Ay", "6m"], ["1 Yıl", "1y"]].map(([label, value]) => (
+                  <button key={value} className={statsWindow === value ? "active" : ""} onClick={() => setStatsWindow(value as "all" | "3m" | "6m" | "1y")}>{label}</button>
+                ))}
+              </div>
+              <label><span>Yön</span><select value={statsDirection} onChange={(e) => setStatsDirection(e.target.value as "all" | "bullish" | "bearish" | "neutral")}><option value="all">Tümü</option><option value="bullish">Yükseliş</option><option value="bearish">Düşüş</option><option value="neutral">Nötr</option></select></label>
+              <label><span>Min. örnek</span><select value={statsMinSamples} onChange={(e) => setStatsMinSamples(Number(e.target.value))}><option value={10}>10</option><option value={20}>20</option><option value={30}>30</option><option value={50}>50</option></select></label>
+              <label><span>Sırala</span><select value={statsSort} onChange={(e) => setStatsSort(e.target.value as "score" | "success" | "samples" | "rr")}><option value="score">İstatistik puanı</option><option value="success">Başarı oranı</option><option value="samples">Örnek sayısı</option><option value="rr">MFE / MAE</option></select></label>
+            </div>
+
+            <div className="stats-v3-coverage">
+              <span>Kaynak kapsamı: <b>{activeStatsBacktest?.available_days == null ? "—" : `${activeStatsBacktest.available_days.toFixed(0)} gün`}</b></span>
+              <span>Analiz edilen dönem: <b>{activeStatsBacktest?.effective_days == null ? "—" : `${activeStatsBacktest.effective_days.toFixed(0)} gün`}</b></span>
+              {statsWindow !== "all" && activeStatsBacktest?.requested_days && (activeStatsBacktest.effective_days ?? 0) + 3 < activeStatsBacktest.requested_days ? <span className="coverage-warning">Veri sağlayıcısı seçilen dönemin tamamını sunmuyor.</span> : null}
+            </div>
+
+            <div className="stats-v2-summary stats-v3-summary">
               <div><span>Seçili hisse</span><strong>{selected}</strong><small>{timeframeLabel(timeframe)}</small></div>
-              <div><span>Güvenilir ufuk</span><strong>{statsSummary.reliableHorizons}</strong><small>min. n={activeStatsBacktest?.minimum_samples ?? 20}</small></div>
-              <div><span>Toplam örnek</span><strong>{statsSummary.totalSamples}</strong><small>14 formasyon toplamı</small></div>
-              <div><span>En yüksek geçmiş başarı</span><strong>{statsSummary.highestRate == null ? "—" : `%${statsSummary.highestRate.toFixed(1)}`}</strong><small>yalnız güvenilir örnekler</small></div>
-              <div><span>Ort. yönsel hareket</span><strong>{statsSummary.avgDirectional == null ? "—" : `${statsSummary.avgDirectional >= 0 ? "+" : ""}${statsSummary.avgDirectional.toFixed(2)}%`}</strong><small>güvenilir ufuk ortalaması</small></div>
+              <div><span>Güvenilir ufuk</span><strong>{statsSummary.reliableHorizons}</strong><small>min. n={statsMinSamples}</small></div>
+              <div><span>Toplam örnek</span><strong>{statsSummary.totalSamples}</strong><small>formasyon örnekleri</small></div>
+              <div><span>En yüksek başarı</span><strong>{statsSummary.highestRate == null ? "—" : `%${statsSummary.highestRate.toFixed(1)}`}</strong><small>güvenilir ufuklar</small></div>
+              <div><span>En iyi bağlam başarısı</span><strong>{statsSummary.contextBest == null ? "—" : `%${statsSummary.contextBest.toFixed(1)}`}</strong><small>önceki trend filtresi</small></div>
+              <div><span>En yüksek puan</span><strong>{statsSummary.topScore == null ? "—" : statsSummary.topScore.toFixed(1)}</strong><small>{statsSummary.topPattern ? patternTurkish(statsSummary.topPattern) : "—"}</small></div>
             </div>
 
             {statsLoading ? <div className="scan-loading">{timeframeLabel(timeframe)} istatistikleri yükleniyor...</div> : null}
             {statsError ? <div className="scan-error">İstatistik verisi alınamadı: {statsError}</div> : null}
 
-            {!activeStatsBacktest ? (
-              <div className="scan-loading">Backtest verisi henüz yüklenmedi.</div>
-            ) : (
-              <div className="analysis-grid stats-v2-grid">
-                {ALL_PATTERN_NAMES.map((name) => {
-                  const row = activeStatsBacktest.patterns.find((p) => p.name === name);
-                  const direction = row?.direction ?? (name.includes("Bearish") || name.includes("Shooting") || name.includes("Hanging") || name.includes("Evening") || name.includes("Black") ? "bearish" : name.includes("Bullish") || name.includes("Hammer") || name.includes("Morning") || name.includes("White") ? "bullish" : "neutral");
-                  const minimum = activeStatsBacktest.minimum_samples ?? 20;
-                  const horizonRows = (["1", "2", "3"] as const).map((h) => ({ h, m: row?.horizons?.[h] }));
-                  const reliableRows = horizonRows.filter(({ m }) => !!m && m.samples >= minimum && m.success_rate != null);
-                  const best = [...reliableRows].sort((a, b) => (b.m?.success_rate ?? 0) - (a.m?.success_rate ?? 0))[0] ?? null;
-                  return (
-                    <article className="analysis-card stats-v2-card" key={name}>
-                      <div className="analysis-card-head">
-                        <div>
-                          <strong>{patternTurkish(name)}</strong>
-                          <span className={`direction-badge compact ${directionClass(direction as Pattern["direction"])}`}>{directionText(direction as Pattern["direction"])}</span>
-                          {best ? <span className="best-horizon-badge">En güçlü geçmiş: +{best.h} mum</span> : null}
-                        </div>
-                        <small>Toplam n={row?.total_samples ?? 0}</small>
-                      </div>
-                      <div className="horizon-grid stats-v2-horizons">
-                        {horizonRows.map(({ h, m }) => {
-                          const reliable = !!m && m.samples >= minimum;
-                          return (
-                            <div key={h} className={reliable ? "reliable" : ""}>
+            {activeStatsBacktest ? (
+              <>
+                <div className="stats-ranking-wrap">
+                  <div className="stats-ranking-title"><div><strong>Formasyon performans sıralaması</strong><span>Geçmiş verinin özeti; al/sat önerisi değildir.</span></div><b>{statsRankedPatterns.length} formasyon</b></div>
+                  <div className="stats-ranking-table-wrap">
+                    <table className="stats-ranking-table">
+                      <thead><tr><th>#</th><th>Formasyon</th><th>Not</th><th>En iyi ufuk</th><th>Başarı</th><th>Örnek</th><th>Ort. / Medyan</th><th>MFE / MAE</th><th>Bağlam</th><th>Puan</th></tr></thead>
+                      <tbody>
+                        {statsRankedPatterns.map((item, index) => {
+                          const m = item.bestMetric;
+                          return <tr key={item.row.name}>
+                            <td>{index + 1}</td>
+                            <td><strong>{patternTurkish(item.row.name)}</strong><span className={`direction-badge compact ${directionClass(item.row.direction)}`}>{directionText(item.row.direction)}</span></td>
+                            <td><span className={`stats-grade grade-${item.grade.toLowerCase()}`}>{item.grade}</span></td>
+                            <td>{item.bestHorizon ? `+${item.bestHorizon} mum` : "—"}</td>
+                            <td>{m?.success_rate == null ? "—" : `%${m.success_rate.toFixed(1)}`}</td>
+                            <td>{m?.samples ?? 0}</td>
+                            <td>{m?.avg_directional_return_pct == null ? "—" : `${m.avg_directional_return_pct >= 0 ? "+" : ""}${m.avg_directional_return_pct.toFixed(2)}%`} / {m?.median_directional_return_pct == null ? "—" : `${m.median_directional_return_pct >= 0 ? "+" : ""}${m.median_directional_return_pct.toFixed(2)}%`}</td>
+                            <td>{m?.avg_mfe_pct == null ? "—" : `${m.avg_mfe_pct.toFixed(2)}%`} / {m?.avg_mae_pct == null ? "—" : `${m.avg_mae_pct.toFixed(2)}%`}{item.rr != null ? <small> R/R≈{item.rr.toFixed(2)}</small> : null}</td>
+                            <td>{m?.context_success_rate == null ? "—" : `%${m.context_success_rate.toFixed(1)}`}<small>{m?.context_samples ? ` n=${m.context_samples}` : ""}</small></td>
+                            <td><b>{item.score.toFixed(1)}</b></td>
+                          </tr>;
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="analysis-grid stats-v2-grid">
+                  {statsRankedPatterns.map(({ row, bestHorizon }) => {
+                    const minimum = Math.max(statsMinSamples, activeStatsBacktest.minimum_samples ?? 20);
+                    const horizonRows = (["1", "2", "3"] as const).map((h) => ({ h, m: row.horizons?.[h] }));
+                    return (
+                      <article className="analysis-card stats-v2-card" key={row.name}>
+                        <div className="analysis-card-head"><div><strong>{patternTurkish(row.name)}</strong><span className={`direction-badge compact ${directionClass(row.direction)}`}>{directionText(row.direction)}</span>{bestHorizon ? <span className="best-horizon-badge">En iyi: +{bestHorizon} mum</span> : null}</div><small>Toplam n={row.total_samples ?? 0}</small></div>
+                        <div className="horizon-grid stats-v2-horizons">
+                          {horizonRows.map(({ h, m }) => {
+                            const reliable = !!m && m.samples >= minimum && m.success_rate != null;
+                            return <div key={h} className={reliable ? "reliable" : ""}>
                               <div className="horizon-title"><span>+{h} mum</span><b>{reliable ? "Güvenilir" : "Örnek az"}</b></div>
                               <strong>{m?.success_rate == null ? "—" : `%${m.success_rate.toFixed(1)}`}</strong>
                               <small>n={m?.samples ?? 0} · {m?.wins ?? 0} başarılı</small>
                               <small>Ort. yön {m?.avg_directional_return_pct == null ? "—" : `${m.avg_directional_return_pct >= 0 ? "+" : ""}${m.avg_directional_return_pct.toFixed(2)}%`}</small>
                               <small>Medyan yön {m?.median_directional_return_pct == null ? "—" : `${m.median_directional_return_pct >= 0 ? "+" : ""}${m.median_directional_return_pct.toFixed(2)}%`}</small>
-                              <small>Ort. mutlak {m?.avg_absolute_move_pct == null ? "—" : `${m.avg_absolute_move_pct.toFixed(2)}%`}</small>
                               <small>MFE {m?.avg_mfe_pct == null ? "—" : `${m.avg_mfe_pct.toFixed(2)}%`} · MAE {m?.avg_mae_pct == null ? "—" : `${m.avg_mae_pct.toFixed(2)}%`}</small>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-            <p className="scanner-note stats-v2-note">V15 İstatistik V2: sonuçlar yalnızca geçmiş kapanmış mum örneklerinden hesaplanır. Zaman dilimi düğmeleri aynı hisseyi farklı mum sürelerinde yeniden analiz eder. “Güvenilir” etiketi yalnızca minimum örnek eşiğini geçen ufukları belirtir; gelecekteki getiriyi garanti etmez.</p>
+                              <small>Bağlam {m?.context_success_rate == null ? "—" : `%${m.context_success_rate.toFixed(1)}`} · n={m?.context_samples ?? 0}</small>
+                            </div>;
+                          })}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </>
+            ) : <div className="scan-loading">Backtest verisi henüz yüklenmedi.</div>}
+            <p className="scanner-note stats-v2-note">V19 İstatistik V3: puan yalnızca geçmiş istatistikleri karşılaştırmak içindir. A/B/C/D notu; örnek sayısı, ufuk tutarlılığı, geçmiş başarı, ortalama hareket ve MFE/MAE dengesinin özetidir. Özellikle 10/15 dakikalık Yahoo geçmişi sınırlı olabilir; üstte gerçek veri kapsamı ayrıca gösterilir.</p>
           </section>
         )}
       </div>

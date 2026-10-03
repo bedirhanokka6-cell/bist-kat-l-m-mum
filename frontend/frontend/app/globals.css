@@ -2010,3 +2010,70 @@ body { min-height: 100dvh; overscroll-behavior-y: none; }
 @media (max-width: 1350px) { .scanner-filter-bar { grid-template-columns:repeat(4,minmax(120px,1fr)); } }
 @media (max-width: 900px) { .scanner-filter-bar { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width: 560px) { .scanner-filter-bar { grid-template-columns:1fr; } }
+
+/* =========================================================
+   V19 — BACKTEST / İSTATİSTİK V3
+   ========================================================= */
+.stats-v3-view { gap: 12px; }
+.stats-v3-controls {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.8fr) repeat(3, minmax(150px, .7fr));
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid rgba(70, 139, 188, .22);
+  border-radius: 12px;
+  background: rgba(5, 28, 45, .62);
+}
+.stats-v3-controls label { display:flex; flex-direction:column; gap:6px; }
+.stats-v3-controls label > span, .stats-periods > span { color:#84a9c1; font-size:11px; font-weight:700; }
+.stats-v3-controls select {
+  min-height: 36px; border:1px solid rgba(80,145,190,.28); border-radius:8px;
+  background:#071d2e; color:#dcebf5; padding:0 10px; outline:none;
+}
+.stats-periods { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.stats-periods > span { width:100%; }
+.stats-periods button {
+  min-height:36px; padding:0 12px; border-radius:8px; border:1px solid rgba(80,145,190,.28);
+  background:#071d2e; color:#a8c3d6; font-weight:700; cursor:pointer;
+}
+.stats-periods button.active { color:#fff; border-color:#238ef2; background:linear-gradient(180deg,#177df0,#0b62c3); box-shadow:0 0 0 1px rgba(35,142,242,.15) inset; }
+.stats-v3-coverage {
+  display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding:9px 12px;
+  border:1px solid rgba(70,139,188,.18); border-radius:10px; background:rgba(4,22,36,.55);
+  color:#789cb5; font-size:11px;
+}
+.stats-v3-coverage b { color:#d9eaf4; }
+.coverage-warning { color:#ffb74a; font-weight:700; }
+.stats-v3-summary { grid-template-columns: repeat(6,minmax(120px,1fr)); }
+.stats-ranking-wrap {
+  border:1px solid rgba(70,139,188,.22); border-radius:12px; overflow:hidden; background:rgba(5,27,44,.7);
+}
+.stats-ranking-title { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid rgba(70,139,188,.18); }
+.stats-ranking-title > div { display:flex; flex-direction:column; gap:3px; }
+.stats-ranking-title strong { color:#eff8ff; font-size:14px; }
+.stats-ranking-title span { color:#7699b2; font-size:10px; }
+.stats-ranking-title > b { color:#7fb4da; font-size:11px; }
+.stats-ranking-table-wrap { overflow:auto; max-width:100%; }
+.stats-ranking-table { width:100%; border-collapse:collapse; min-width:1050px; }
+.stats-ranking-table th { position:sticky; top:0; background:#082238; color:#80a6bf; font-size:10px; text-align:left; padding:9px 10px; border-bottom:1px solid rgba(70,139,188,.2); white-space:nowrap; }
+.stats-ranking-table td { padding:9px 10px; border-bottom:1px solid rgba(70,139,188,.11); color:#c4d9e7; font-size:11px; vertical-align:middle; white-space:nowrap; }
+.stats-ranking-table tbody tr:hover { background:rgba(25,101,153,.08); }
+.stats-ranking-table td:nth-child(2) { min-width:180px; }
+.stats-ranking-table td:nth-child(2) strong { margin-right:7px; color:#f2f8fc; }
+.stats-ranking-table td small { color:#7195ae; margin-left:5px; }
+.stats-grade { display:inline-flex; min-width:30px; height:24px; align-items:center; justify-content:center; border-radius:7px; font-weight:900; border:1px solid rgba(120,160,190,.25); }
+.stats-grade.grade-a { color:#2be7aa; border-color:rgba(43,231,170,.45); background:rgba(43,231,170,.09); }
+.stats-grade.grade-b { color:#52b7ff; border-color:rgba(82,183,255,.42); background:rgba(82,183,255,.09); }
+.stats-grade.grade-c { color:#ffc14d; border-color:rgba(255,193,77,.42); background:rgba(255,193,77,.08); }
+.stats-grade.grade-d { color:#8097aa; }
+
+@media (max-width: 1450px) {
+  .stats-v3-controls { grid-template-columns: 1fr 1fr; }
+  .stats-v3-summary { grid-template-columns: repeat(3,minmax(120px,1fr)); }
+}
+@media (max-width: 760px) {
+  .stats-v3-controls { grid-template-columns:1fr; }
+  .stats-v3-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .stats-periods button { flex:1; }
+}
