@@ -34,6 +34,10 @@ class PaperTradeModel(BaseModel):
     quantity: float | None = None
     investedAmount: float | None = None
     pnlAmount: float | None = None
+    riskPct: float | None = None
+    riskAmount: float | None = None
+    signalScore: float | None = None
+    signalGrade: Literal["A", "B", "C", "D"] | None = None
 
 
 class PaperTradeSyncRequest(BaseModel):
@@ -72,6 +76,10 @@ def init_db():
                 quantity REAL,
                 invested_amount REAL,
                 pnl_amount REAL,
+                risk_pct REAL,
+                risk_amount REAL,
+                signal_score REAL,
+                signal_grade TEXT,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -83,6 +91,14 @@ def init_db():
             conn.execute("ALTER TABLE paper_trades ADD COLUMN invested_amount REAL")
         if "pnl_amount" not in columns:
             conn.execute("ALTER TABLE paper_trades ADD COLUMN pnl_amount REAL")
+        if "risk_pct" not in columns:
+            conn.execute("ALTER TABLE paper_trades ADD COLUMN risk_pct REAL")
+        if "risk_amount" not in columns:
+            conn.execute("ALTER TABLE paper_trades ADD COLUMN risk_amount REAL")
+        if "signal_score" not in columns:
+            conn.execute("ALTER TABLE paper_trades ADD COLUMN signal_score REAL")
+        if "signal_grade" not in columns:
+            conn.execute("ALTER TABLE paper_trades ADD COLUMN signal_grade TEXT")
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_paper_trades_entry_time ON paper_trades(entry_time DESC)"
@@ -119,6 +135,10 @@ def row_to_trade(row: sqlite3.Row):
         "quantity": row["quantity"],
         "investedAmount": row["invested_amount"],
         "pnlAmount": row["pnl_amount"],
+        "riskPct": row["risk_pct"],
+        "riskAmount": row["risk_amount"],
+        "signalScore": row["signal_score"],
+        "signalGrade": row["signal_grade"],
     }
 
 
@@ -157,8 +177,9 @@ def sync_trades(payload: PaperTradeSyncRequest):
                     id, symbol, timeframe, pattern_name, direction,
                     entry_time, entry_price, target_price, stop_price,
                     target_pct, stop_pct, horizon, backtest_rate, samples,
-                    status, exit_time, exit_price, pnl_pct, quantity, invested_amount, pnl_amount, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    status, exit_time, exit_price, pnl_pct, quantity, invested_amount, pnl_amount,
+                    risk_pct, risk_amount, signal_score, signal_grade, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET
                     symbol=excluded.symbol,
                     timeframe=excluded.timeframe,
@@ -180,6 +201,10 @@ def sync_trades(payload: PaperTradeSyncRequest):
                     quantity=excluded.quantity,
                     invested_amount=excluded.invested_amount,
                     pnl_amount=excluded.pnl_amount,
+                    risk_pct=excluded.risk_pct,
+                    risk_amount=excluded.risk_amount,
+                    signal_score=excluded.signal_score,
+                    signal_grade=excluded.signal_grade,
                     updated_at=CURRENT_TIMESTAMP
                 """,
                 (
@@ -188,6 +213,7 @@ def sync_trades(payload: PaperTradeSyncRequest):
                     t["targetPct"], t["stopPct"], t["horizon"], t["backtestRate"], t["samples"],
                     t["status"], t.get("exitTime"), t.get("exitPrice"), t.get("pnlPct"),
                     t.get("quantity"), t.get("investedAmount"), t.get("pnlAmount"),
+                    t.get("riskPct"), t.get("riskAmount"), t.get("signalScore"), t.get("signalGrade"),
                 ),
             )
         conn.commit()

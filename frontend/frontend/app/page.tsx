@@ -114,6 +114,10 @@ type PaperTrade = {
   quantity?: number;
   investedAmount?: number;
   pnlAmount?: number;
+  riskPct?: number;
+  riskAmount?: number;
+  signalScore?: number;
+  signalGrade?: "A" | "B" | "C" | "D";
 };
 
 type NotificationEventType = "strong_signal" | "paper_open" | "paper_target" | "paper_stop" | "paper_close";
@@ -135,6 +139,9 @@ const NOTIFIED_IDS_KEY = "bist-candle-notified-ids-v1";
 const FAVORITES_KEY = "bist-candle-favorites-v1";
 const PAPER_BALANCE_KEY = "bist-candle-paper-balance-v2";
 const PAPER_ALLOCATION_KEY = "bist-candle-paper-allocation-v2";
+const PAPER_RISK_KEY = "bist-candle-paper-risk-v3";
+const PAPER_MIN_SUCCESS_KEY = "bist-candle-paper-min-success-v3";
+const PAPER_MIN_SAMPLES_KEY = "bist-candle-paper-min-samples-v3";
 const NOTIFICATION_EVENTS_KEY = "bist-candle-notification-events-v2";
 
 function clamp(value: number, min: number, max: number) {
@@ -321,6 +328,9 @@ export default function Home() {
   const [paperLoaded, setPaperLoaded] = useState(false);
   const [paperInitialBalance, setPaperInitialBalance] = useState(100000);
   const [paperAllocationPct, setPaperAllocationPct] = useState(10);
+  const [paperRiskPct, setPaperRiskPct] = useState(1);
+  const [paperMinSuccess, setPaperMinSuccess] = useState(58);
+  const [paperMinSamples, setPaperMinSamples] = useState(25);
   const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<"unsupported" | "default" | "granted" | "denied">("default");
   const [notificationEvents, setNotificationEvents] = useState<NotificationEvent[]>([]);
@@ -425,10 +435,16 @@ export default function Home() {
         const rawNotifiedIds = window.localStorage.getItem(NOTIFIED_IDS_KEY);
         const rawBalance = window.localStorage.getItem(PAPER_BALANCE_KEY);
         const rawAllocation = window.localStorage.getItem(PAPER_ALLOCATION_KEY);
+        const rawRisk = window.localStorage.getItem(PAPER_RISK_KEY);
+        const rawMinSuccess = window.localStorage.getItem(PAPER_MIN_SUCCESS_KEY);
+        const rawMinSamples = window.localStorage.getItem(PAPER_MIN_SAMPLES_KEY);
 
         if (rawTrades) localTrades = JSON.parse(rawTrades);
         if (rawBalance && Number.isFinite(Number(rawBalance))) setPaperInitialBalance(Math.max(1000, Number(rawBalance)));
         if (rawAllocation && Number.isFinite(Number(rawAllocation))) setPaperAllocationPct(clamp(Number(rawAllocation), 1, 100));
+        if (rawRisk && Number.isFinite(Number(rawRisk))) setPaperRiskPct(clamp(Number(rawRisk), 0.1, 5));
+        if (rawMinSuccess && Number.isFinite(Number(rawMinSuccess))) setPaperMinSuccess(clamp(Number(rawMinSuccess), 50, 90));
+        if (rawMinSamples && Number.isFinite(Number(rawMinSamples))) setPaperMinSamples(clamp(Number(rawMinSamples), 10, 200));
         if (rawEnabled != null) setPaperEnabled(rawEnabled === "true");
         if (rawNotify != null) setNotifyEnabled(rawNotify === "true");
         if (rawNotifiedIds) notifiedIdsRef.current = new Set(JSON.parse(rawNotifiedIds));
@@ -513,10 +529,13 @@ export default function Home() {
     try {
       window.localStorage.setItem(PAPER_BALANCE_KEY, String(paperInitialBalance));
       window.localStorage.setItem(PAPER_ALLOCATION_KEY, String(paperAllocationPct));
+      window.localStorage.setItem(PAPER_RISK_KEY, String(paperRiskPct));
+      window.localStorage.setItem(PAPER_MIN_SUCCESS_KEY, String(paperMinSuccess));
+      window.localStorage.setItem(PAPER_MIN_SAMPLES_KEY, String(paperMinSamples));
     } catch {
       // Ayarlar yazılamazsa uygulama çalışmaya devam eder.
     }
-  }, [paperInitialBalance, paperAllocationPct, paperLoaded]);
+  }, [paperInitialBalance, paperAllocationPct, paperRiskPct, paperMinSuccess, paperMinSamples, paperLoaded]);
 
   useEffect(() => {
     if (!paperLoaded) return;
@@ -781,18 +800,36 @@ export default function Home() {
             const stats = backtest.patterns.find((item) => item.name === pattern.name);
             if (!stats) continue;
 
-            const minimumSamples = Math.max(backtest.minimum_samples ?? 20, 20);
-            const best = (["1", "2", "3"] as const)
+            const minimumSamples = Math.max(backtest.minimum_samples ?? 20, paperMinSamples);
+            const horizonRows = (["1", "2", "3"] as const)
               .map((key) => ({ horizon: Number(key), metric: stats.horizons[key] }))
+              .filter(({ metric }) => metric.samples >= minimumSamples && metric.success_rate != null);
+
+            const positiveHorizons = horizonRows.filter(({ metric }) =>
+              (metric.success_rate ?? 0) >= paperMinSuccess &&
+              (metric.avg_directional_return_pct ?? 0) > 0
+            ).length;
+
+            const best = [...horizonRows]
               .filter(({ metric }) =>
-                metric.samples >= minimumSamples &&
-                metric.success_rate != null &&
-                metric.success_rate >= 55 &&
+                (metric.success_rate ?? 0) >= paperMinSuccess &&
                 (metric.avg_directional_return_pct ?? 0) > 0
               )
               .sort((a, b) => (b.metric.success_rate ?? 0) - (a.metric.success_rate ?? 0))[0];
 
-            if (!best) continue;
+            if (!best || positiveHorizons < 2) continue;
+
+            const mfe = Math.max(0, best.metric.avg_mfe_pct ?? 0);
+            const maeAbs = Math.abs(best.metric.avg_mae_pct ?? 0);
+            const rr = maeAbs > 0 ? mfe / maeAbs : 0;
+            const sampleQuality = Math.min(1, best.metric.samples / 60);
+            const successQuality = (best.metric.success_rate ?? 0) / 100;
+            const consistencyQuality = positiveHorizons / 3;
+            const rrQuality = Math.min(1, rr / 2);
+            const signalScore = Math.round((successQuality * 50 + sampleQuality * 20 + consistencyQuality * 15 + rrQuality * 15) * 10) / 10;
+            const signalGrade: "A" | "B" | "C" | "D" =
+              signalScore >= 72 ? "A" : signalScore >= 62 ? "B" : signalScore >= 55 ? "C" : "D";
+            if (signalScore < 55) continue;
 
             const targetPct = clamp(best.metric.avg_mfe_pct ?? 1.5, 0.6, 4);
             const stopPct = clamp(Math.abs(best.metric.avg_mae_pct ?? -1), 0.5, 3);
@@ -806,10 +843,16 @@ export default function Home() {
               .reduce((sum, trade) => sum + (trade.investedAmount ?? 0), 0);
             const accountBalance = paperInitialBalance + realizedPnl;
             const availableCash = Math.max(0, accountBalance - openExposure);
-            const intendedPosition = Math.min(accountBalance * (paperAllocationPct / 100), availableCash);
-            const quantity = Math.floor(intendedPosition / entry);
+            const maxPositionValue = Math.min(accountBalance * (paperAllocationPct / 100), availableCash);
+            const riskBudget = Math.max(0, accountBalance * (paperRiskPct / 100));
+            const riskPerShare = entry * (stopPct / 100);
+            const riskBasedQty = riskPerShare > 0 ? Math.floor(riskBudget / riskPerShare) : 0;
+            const exposureBasedQty = Math.floor(maxPositionValue / entry);
+            const cashBasedQty = Math.floor(availableCash / entry);
+            const quantity = Math.min(riskBasedQty, exposureBasedQty, cashBasedQty);
             const investedAmount = quantity * entry;
-            if (quantity < 1 || investedAmount <= 0) continue;
+            const riskAmount = quantity * riskPerShare;
+            if (quantity < 1 || investedAmount <= 0 || riskAmount <= 0) continue;
 
             nextTrades.unshift({
               id: `${marketSnapshot.symbol}-${marketSnapshot.timeframe}-${pattern.name}-${pattern.time}`,
@@ -830,6 +873,10 @@ export default function Home() {
               quantity,
               investedAmount,
               pnlAmount: 0,
+              riskPct: paperRiskPct,
+              riskAmount,
+              signalScore,
+              signalGrade,
             });
             changed = true;
             break;
@@ -839,7 +886,7 @@ export default function Home() {
 
       return changed ? nextTrades.slice(0, 200) : currentTrades;
     });
-  }, [marketSnapshot, backtest, paperEnabled, paperLoaded, paperInitialBalance, paperAllocationPct]);
+  }, [marketSnapshot, backtest, paperEnabled, paperLoaded, paperInitialBalance, paperAllocationPct, paperRiskPct, paperMinSuccess, paperMinSamples]);
 
   useEffect(() => {
     if (!notifyEnabled || notificationStatus !== "granted" || !marketSnapshot || !backtest) return;
@@ -1254,17 +1301,38 @@ export default function Home() {
   const paperSummary = useMemo(() => {
     const openTrades = paperTrades.filter((trade) => trade.status === "open");
     const completedTrades = paperTrades.filter((trade) => trade.status !== "open");
+    const pnlAmounts = completedTrades.map((trade) =>
+      trade.pnlAmount ?? ((trade.investedAmount ?? 0) * ((trade.pnlPct ?? 0) / 100))
+    );
     const wins = completedTrades.filter((trade) => (trade.pnlPct ?? 0) > 0).length;
     const losses = completedTrades.filter((trade) => (trade.pnlPct ?? 0) < 0).length;
-    const realizedPnl = completedTrades.reduce((sum, trade) => {
-      const amount = trade.pnlAmount ?? ((trade.investedAmount ?? 0) * ((trade.pnlPct ?? 0) / 100));
-      return sum + amount;
-    }, 0);
+    const realizedPnl = pnlAmounts.reduce((sum, value) => sum + value, 0);
+    const grossProfit = pnlAmounts.filter((value) => value > 0).reduce((sum, value) => sum + value, 0);
+    const grossLossAbs = Math.abs(pnlAmounts.filter((value) => value < 0).reduce((sum, value) => sum + value, 0));
+    const profitFactor = grossLossAbs > 0 ? grossProfit / grossLossAbs : grossProfit > 0 ? null : 0;
     const openExposure = openTrades.reduce((sum, trade) => sum + (trade.investedAmount ?? 0), 0);
+    const openRisk = openTrades.reduce((sum, trade) => sum + (trade.riskAmount ?? ((trade.investedAmount ?? 0) * ((trade.stopPct ?? 0) / 100))), 0);
     const balance = paperInitialBalance + realizedPnl;
     const availableCash = Math.max(0, balance - openExposure);
     const returnPct = paperInitialBalance > 0 ? (realizedPnl / paperInitialBalance) * 100 : 0;
     const winRate = completedTrades.length ? (wins / completedTrades.length) * 100 : 0;
+    const avgWin = wins ? grossProfit / wins : 0;
+    const avgLoss = losses ? grossLossAbs / losses : 0;
+    const expectancy = completedTrades.length ? realizedPnl / completedTrades.length : 0;
+
+    const chronological = completedTrades
+      .filter((trade) => trade.exitTime)
+      .slice()
+      .sort((a, b) => (a.exitTime ?? 0) - (b.exitTime ?? 0));
+    let equity = paperInitialBalance;
+    let peak = equity;
+    let maxDrawdownPct = 0;
+    for (const trade of chronological) {
+      equity += trade.pnlAmount ?? ((trade.investedAmount ?? 0) * ((trade.pnlPct ?? 0) / 100));
+      peak = Math.max(peak, equity);
+      const drawdown = peak > 0 ? ((equity - peak) / peak) * 100 : 0;
+      maxDrawdownPct = Math.min(maxDrawdownPct, drawdown);
+    }
 
     return {
       open: openTrades.length,
@@ -1272,11 +1340,19 @@ export default function Home() {
       wins,
       losses,
       realizedPnl,
+      grossProfit,
+      grossLossAbs,
+      profitFactor,
       openExposure,
+      openRisk,
       balance,
       availableCash,
       returnPct,
       winRate,
+      avgWin,
+      avgLoss,
+      expectancy,
+      maxDrawdownPct,
     };
   }, [paperTrades, paperInitialBalance]);
 
@@ -1285,11 +1361,11 @@ export default function Home() {
       .filter((trade) => trade.status !== "open" && trade.exitTime)
       .slice()
       .sort((a, b) => (a.exitTime ?? 0) - (b.exitTime ?? 0));
-    let cumulative = 0;
-    const values = [0];
+    let equity = paperInitialBalance;
+    const values = [equity];
     for (const trade of closed) {
-      cumulative += trade.pnlAmount ?? ((trade.investedAmount ?? 0) * ((trade.pnlPct ?? 0) / 100));
-      values.push(cumulative);
+      equity += trade.pnlAmount ?? ((trade.investedAmount ?? 0) * ((trade.pnlPct ?? 0) / 100));
+      values.push(equity);
     }
     const min = Math.min(...values);
     const max = Math.max(...values);
@@ -1301,7 +1377,31 @@ export default function Home() {
       const y = height - ((value - min) / span) * (height - 16) - 8;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(" ");
-    return { points, count: closed.length, cumulative };
+    return { points, count: closed.length, equity, min, max };
+  }, [paperTrades, paperInitialBalance]);
+
+  const paperPatternPerformance = useMemo(() => {
+    const groups = new Map<string, { name: string; trades: number; wins: number; pnl: number; grossProfit: number; grossLossAbs: number }>();
+    for (const trade of paperTrades.filter((item) => item.status !== "open")) {
+      const current = groups.get(trade.patternName) ?? { name: trade.patternName, trades: 0, wins: 0, pnl: 0, grossProfit: 0, grossLossAbs: 0 };
+      const pnl = trade.pnlAmount ?? ((trade.investedAmount ?? 0) * ((trade.pnlPct ?? 0) / 100));
+      current.trades += 1;
+      current.pnl += pnl;
+      if (pnl > 0) {
+        current.wins += 1;
+        current.grossProfit += pnl;
+      } else if (pnl < 0) {
+        current.grossLossAbs += Math.abs(pnl);
+      }
+      groups.set(trade.patternName, current);
+    }
+    return [...groups.values()]
+      .map((row) => ({
+        ...row,
+        winRate: row.trades ? (row.wins / row.trades) * 100 : 0,
+        profitFactor: row.grossLossAbs > 0 ? row.grossProfit / row.grossLossAbs : row.grossProfit > 0 ? null : 0,
+      }))
+      .sort((a, b) => b.pnl - a.pnl);
   }, [paperTrades]);
 
   const unreadNotificationCount = notificationEvents.reduce((sum, item) => sum + (item.read ? 0 : 1), 0);
@@ -1918,8 +2018,8 @@ export default function Home() {
           <section className="wide-view panel paper-v2-view">
             <div className="wide-view-header">
               <div>
-                <h2>Paper Trading V2</h2>
-                <p>Gerçek emir göndermez. Sanal bakiye, pozisyon büyüklüğü, açık/kapanan işlemler ve performans tek ekranda.</p>
+                <h2>Paper Trading V3</h2>
+                <p>Gerçek emir göndermez. Risk bazlı lot hesabı, güvenilir sinyal filtresi, drawdown ve Profit Factor ile stratejiyi ölç.</p>
               </div>
               <div className="paper-v2-actions">
                 <button className={`paper-toggle ${paperEnabled ? "active" : ""}`} onClick={() => setPaperEnabled((v) => !v)}>{paperEnabled ? "Otomatik Açık" : "Otomatik Kapalı"}</button>
@@ -1927,29 +2027,35 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="paper-v2-settings">
+            <div className="paper-v2-settings paper-v3-settings">
               <label><span>Başlangıç Bakiye</span><input type="number" min="1000" step="1000" value={paperInitialBalance} onChange={(e) => setPaperInitialBalance(Math.max(1000, Number(e.target.value) || 1000))}/></label>
-              <label><span>İşlem Başına Bakiye</span><div className="paper-allocation-input"><input type="number" min="1" max="100" step="1" value={paperAllocationPct} onChange={(e) => setPaperAllocationPct(clamp(Number(e.target.value) || 1, 1, 100))}/><b>%</b></div></label>
+              <label><span>Maks. Pozisyon</span><div className="paper-allocation-input"><input type="number" min="1" max="100" step="1" value={paperAllocationPct} onChange={(e) => setPaperAllocationPct(clamp(Number(e.target.value) || 1, 1, 100))}/><b>%</b></div></label>
+              <label><span>İşlem Riski</span><div className="paper-allocation-input"><input type="number" min="0.1" max="5" step="0.1" value={paperRiskPct} onChange={(e) => setPaperRiskPct(clamp(Number(e.target.value) || 0.1, 0.1, 5))}/><b>%</b></div></label>
+              <label><span>Min. Başarı</span><div className="paper-allocation-input"><input type="number" min="50" max="90" step="1" value={paperMinSuccess} onChange={(e) => setPaperMinSuccess(clamp(Number(e.target.value) || 50, 50, 90))}/><b>%</b></div></label>
+              <label><span>Min. Örnek</span><input type="number" min="10" max="200" step="5" value={paperMinSamples} onChange={(e) => setPaperMinSamples(clamp(Number(e.target.value) || 10, 10, 200))}/></label>
               <div><span>Hesap Bakiye</span><strong>₺{paperSummary.balance.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
               <div><span>Kullanılabilir</span><strong>₺{paperSummary.availableCash.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
-              <div><span>Açık Pozisyon</span><strong>₺{paperSummary.openExposure.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
+              <div><span>Açık Risk</span><strong>₺{paperSummary.openRisk.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
             </div>
 
-            <div className="paper-v2-kpis">
+            <div className="paper-v2-kpis paper-v3-kpis">
               <div><span>Gerçekleşen K/Z</span><strong className={paperSummary.realizedPnl >= 0 ? "positive" : "negative"}>{paperSummary.realizedPnl >= 0 ? "+" : ""}₺{paperSummary.realizedPnl.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
               <div><span>Toplam Getiri</span><strong className={paperSummary.returnPct >= 0 ? "positive" : "negative"}>{paperSummary.returnPct >= 0 ? "+" : ""}{paperSummary.returnPct.toFixed(2)}%</strong></div>
+              <div><span>Kazanma Oranı</span><strong>{paperSummary.completed ? `%${paperSummary.winRate.toFixed(1)}` : "—"}</strong></div>
+              <div><span>Profit Factor</span><strong>{paperSummary.profitFactor == null ? "∞" : paperSummary.completed ? paperSummary.profitFactor.toFixed(2) : "—"}</strong></div>
+              <div><span>Maks. Drawdown</span><strong className={paperSummary.maxDrawdownPct < 0 ? "negative" : ""}>{paperSummary.completed ? `${paperSummary.maxDrawdownPct.toFixed(2)}%` : "—"}</strong></div>
+              <div><span>Beklenti / İşlem</span><strong className={paperSummary.expectancy >= 0 ? "positive" : "negative"}>{paperSummary.completed ? `${paperSummary.expectancy >= 0 ? "+" : ""}₺${paperSummary.expectancy.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}` : "—"}</strong></div>
               <div><span>Açık İşlem</span><strong>{paperSummary.open}</strong></div>
               <div><span>Tamamlanan</span><strong>{paperSummary.completed}</strong></div>
-              <div><span>Kazanma Oranı</span><strong>{paperSummary.completed ? `%${paperSummary.winRate.toFixed(1)}` : "—"}</strong></div>
             </div>
 
             <div className="paper-v2-grid">
               <article className="paper-v2-card performance-card">
-                <div className="paper-v2-card-head"><div><h3>Performans</h3><span>Kapanan işlemlerin kümülatif sanal K/Z eğrisi</span></div><strong>{paperPerformance.count} işlem</strong></div>
+                <div className="paper-v2-card-head"><div><h3>Performans</h3><span>Kapanan işlemler sonrası sanal hesap equity eğrisi</span></div><strong>{paperPerformance.count} işlem</strong></div>
                 {paperPerformance.count ? (
                   <svg className="paper-performance-chart" viewBox="0 0 600 120" preserveAspectRatio="none" aria-label="Paper trading performans grafiği">
                     <line x1="0" y1="60" x2="600" y2="60" className="paper-zero-line"/>
-                    <polyline points={paperPerformance.points} fill="none" className={paperPerformance.cumulative >= 0 ? "paper-equity-line positive-line" : "paper-equity-line negative-line"}/>
+                    <polyline points={paperPerformance.points} fill="none" className={paperPerformance.equity >= paperInitialBalance ? "paper-equity-line positive-line" : "paper-equity-line negative-line"}/>
                   </svg>
                 ) : <div className="paper-v2-empty">Henüz kapanmış sanal işlem yok.</div>}
               </article>
@@ -1965,35 +2071,58 @@ export default function Home() {
                       <div><span>Tutar</span><strong>{trade.investedAmount ? `₺${trade.investedAmount.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}` : "—"}</strong></div>
                       <div><span>Hedef</span><strong className="positive">₺{trade.targetPrice.toFixed(2)}</strong></div>
                       <div><span>Stop</span><strong className="negative">₺{trade.stopPrice.toFixed(2)}</strong></div>
+                      <div><span>Risk</span><strong>{trade.riskAmount != null ? `₺${trade.riskAmount.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}` : "—"}</strong></div>
+                      <div><span>Sinyal</span><strong>{trade.signalGrade ?? "—"}{trade.signalScore != null ? ` · ${trade.signalScore.toFixed(1)}` : ""}</strong></div>
                     </div>
                   )) : <div className="paper-v2-empty">Açık sanal pozisyon yok.</div>}
                 </div>
               </article>
             </div>
 
-            <article className="paper-v2-card history-card">
-              <div className="paper-v2-card-head"><div><h3>İşlem Geçmişi</h3><span>En yeni işlemler üstte</span></div><strong>{paperTrades.length} kayıt</strong></div>
+            <article className="paper-v2-card paper-pattern-card">
+              <div className="paper-v2-card-head"><div><h3>Formasyon Bazlı Performans</h3><span>Kapanan sanal işlemlerde hangi formasyon ne yaptı?</span></div><strong>{paperPatternPerformance.length} formasyon</strong></div>
               <div className="paper-v2-table-wrap">
                 <table className="paper-v2-table">
-                  <thead><tr><th>Hisse</th><th>Formasyon</th><th>Yön</th><th>Giriş</th><th>Hedef</th><th>Stop</th><th>Lot</th><th>Pozisyon</th><th>Durum</th><th>K/Z</th></tr></thead>
+                  <thead><tr><th>Formasyon</th><th>İşlem</th><th>Kazanma</th><th>Profit Factor</th><th>Net K/Z</th></tr></thead>
                   <tbody>
-                    {paperTrades.length ? paperTrades.slice(0, 100).map((trade) => (
-                      <tr key={trade.id}>
-                        <td><strong>{trade.symbol}</strong><small>{timeframeLabel(trade.timeframe)}</small></td>
-                        <td>{patternTurkish(trade.patternName)}<small>geçmiş %{trade.backtestRate.toFixed(1)} · n={trade.samples}</small></td>
-                        <td><span className={`direction-badge compact ${directionClass(trade.direction)}`}>{directionText(trade.direction)}</span></td>
-                        <td>₺{trade.entryPrice.toFixed(2)}</td><td>₺{trade.targetPrice.toFixed(2)}</td><td>₺{trade.stopPrice.toFixed(2)}</td>
-                        <td>{trade.quantity ?? "—"}</td><td>{trade.investedAmount ? `₺${trade.investedAmount.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}` : "—"}</td>
-                        <td>{paperStatusText(trade.status)}</td>
-                        <td><strong className={(trade.pnlPct ?? 0) >= 0 ? "positive" : "negative"}>{trade.pnlPct == null ? "—" : `${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%`}{trade.pnlAmount != null ? <small>{trade.pnlAmount >= 0 ? "+" : ""}₺{trade.pnlAmount.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</small> : null}</strong></td>
+                    {paperPatternPerformance.length ? paperPatternPerformance.map((row) => (
+                      <tr key={row.name}>
+                        <td><strong>{patternTurkish(row.name)}</strong></td>
+                        <td>{row.trades}</td>
+                        <td>%{row.winRate.toFixed(1)}</td>
+                        <td>{row.profitFactor == null ? "∞" : row.profitFactor.toFixed(2)}</td>
+                        <td><strong className={row.pnl >= 0 ? "positive" : "negative"}>{row.pnl >= 0 ? "+" : ""}₺{row.pnl.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></td>
                       </tr>
-                    )) : <tr><td colSpan={10}><div className="paper-v2-empty">Henüz sanal işlem kaydı yok. Otomatik Paper Trading açıkken yeterli geçmiş veriye sahip yönlü formasyon beklenir.</div></td></tr>}
+                    )) : <tr><td colSpan={5}><div className="paper-v2-empty">Formasyon performansı için kapanmış sanal işlem bekleniyor.</div></td></tr>}
                   </tbody>
                 </table>
               </div>
             </article>
 
-            <p className="scanner-note">V13 Paper Trading V2 yalnızca simülasyondur; gerçek emir göndermez. Pozisyon büyüklüğü hesap bakiyesi ve seçilen işlem başı yüzdeye göre hesaplanır. Sonuçlar formasyon geçmişine dayanır ve gelecekteki getiriyi garanti etmez.</p>
+            <article className="paper-v2-card history-card">
+              <div className="paper-v2-card-head"><div><h3>İşlem Geçmişi</h3><span>En yeni işlemler üstte</span></div><strong>{paperTrades.length} kayıt</strong></div>
+              <div className="paper-v2-table-wrap">
+                <table className="paper-v2-table">
+                  <thead><tr><th>Hisse</th><th>Formasyon</th><th>Sinyal</th><th>Yön</th><th>Giriş</th><th>Hedef</th><th>Stop</th><th>Lot</th><th>Risk</th><th>Durum</th><th>K/Z</th></tr></thead>
+                  <tbody>
+                    {paperTrades.length ? paperTrades.slice(0, 100).map((trade) => (
+                      <tr key={trade.id}>
+                        <td><strong>{trade.symbol}</strong><small>{timeframeLabel(trade.timeframe)}</small></td>
+                        <td>{patternTurkish(trade.patternName)}<small>geçmiş %{trade.backtestRate.toFixed(1)} · n={trade.samples}</small></td>
+                        <td>{trade.signalGrade ?? "—"}{trade.signalScore != null ? <small>{trade.signalScore.toFixed(1)} puan</small> : null}</td>
+                        <td><span className={`direction-badge compact ${directionClass(trade.direction)}`}>{directionText(trade.direction)}</span></td>
+                        <td>₺{trade.entryPrice.toFixed(2)}</td><td>₺{trade.targetPrice.toFixed(2)}</td><td>₺{trade.stopPrice.toFixed(2)}</td>
+                        <td>{trade.quantity ?? "—"}</td><td>{trade.riskAmount != null ? `₺${trade.riskAmount.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}` : "—"}</td>
+                        <td>{paperStatusText(trade.status)}</td>
+                        <td><strong className={(trade.pnlPct ?? 0) >= 0 ? "positive" : "negative"}>{trade.pnlPct == null ? "—" : `${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%`}{trade.pnlAmount != null ? <small>{trade.pnlAmount >= 0 ? "+" : ""}₺{trade.pnlAmount.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</small> : null}</strong></td>
+                      </tr>
+                    )) : <tr><td colSpan={11}><div className="paper-v2-empty">Henüz sanal işlem kaydı yok. Otomatik Paper Trading açıkken yeterli geçmiş veriye sahip yönlü formasyon beklenir.</div></td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <p className="scanner-note">V20 Paper Trading V3 yalnızca simülasyondur; gerçek emir göndermez. Lot, stop mesafesi ve işlem başına risk bütçesine göre hesaplanır; maksimum pozisyon yüzdesi ayrıca sermaye kullanımını sınırlar. İşlem yalnız en az iki ufukta yeterli örnek, pozitif yönsel hareket ve seçilen minimum geçmiş başarı koşulu varsa açılır. Geçmiş sonuçlar gelecekteki getiriyi garanti etmez.</p>
           </section>
         ) : activeView === "notifications" ? (
           <section className="wide-view panel notifications-view">

@@ -2077,3 +2077,29 @@ body { min-height: 100dvh; overscroll-behavior-y: none; }
   .stats-v3-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .stats-periods button { flex:1; }
 }
+
+/* V20 — Paper Trading V3 */
+.paper-v3-settings { grid-template-columns: repeat(8,minmax(120px,1fr)); align-items:stretch; }
+.paper-v3-kpis { grid-template-columns: repeat(8,minmax(110px,1fr)); }
+.paper-pattern-card { margin-top:14px; }
+.paper-v2-row { grid-template-columns:minmax(180px,1.6fr) repeat(7,minmax(72px,.75fr)); }
+.paper-v2-row > div { min-width:0; }
+.paper-v2-row > div span { display:block; color:#6f93ab; font-size:9px; margin-bottom:3px; }
+.paper-v2-row > div strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.paper-v3-settings label { min-width:0; }
+.paper-v3-settings input { width:100%; }
+.paper-v3-kpis > div { min-width:0; }
+.paper-pattern-card .paper-v2-table { min-width:650px; }
+
+@media (max-width: 1500px) {
+  .paper-v3-settings { grid-template-columns: repeat(4,minmax(120px,1fr)); }
+  .paper-v3-kpis { grid-template-columns: repeat(4,minmax(110px,1fr)); }
+}
+@media (max-width: 900px) {
+  .paper-v3-settings { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .paper-v3-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .paper-v2-row { grid-template-columns:1fr 1fr; gap:8px; }
+}
+@media (max-width: 560px) {
+  .paper-v3-settings,.paper-v3-kpis { grid-template-columns:1fr; }
+}
