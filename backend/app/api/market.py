@@ -1709,6 +1709,228 @@ def pattern_context_alignment(pattern, market_context):
 
 
 # =========================================================
+# V22.2 — ÇOKLU ZAMAN DİLİMİ TEYİDİ
+# =========================================================
+
+def confirmation_timeframe(timeframe: str):
+    """Ana zaman diliminin yönünü teyit etmek için bir üst zaman dilimini seçer."""
+    return {
+        "10m": "1h",
+        "15m": "1h",
+        "1h": "4h",
+        "4h": "1d",
+        "1d": None,
+    }.get(timeframe)
+
+
+def _frame_to_context(frame: pd.DataFrame, timeframe: str):
+    """Yahoo veri çerçevesini ilgili zaman dilimine çevirip V22.1 bağlamını üretir."""
+    if frame is None or frame.empty:
+        return None
+
+    frame = frame.copy()
+
+    if isinstance(frame.columns, pd.MultiIndex):
+        frame.columns = frame.columns.get_level_values(0)
+
+    required = ["Open", "High", "Low", "Close", "Volume"]
+    if not all(col in frame.columns for col in required):
+        return None
+
+    frame = (
+        frame[required]
+        .dropna(subset=["Open", "High", "Low", "Close"])
+        .sort_index()
+    )
+
+    if frame.empty:
+        return None
+
+    if timeframe == "10m":
+        frame = resample_10m(frame)
+    elif timeframe == "4h":
+        frame = resample_4h(frame)
+
+    if frame.empty:
+        return None
+
+    candles = dataframe_to_candles(frame, min(len(frame), 240))
+    if len(candles) < 8:
+        return None
+
+    return analyze_market_context(candles, timeframe)
+
+
+def fetch_confirmation_context(symbol: str, timeframe: str):
+    """Tek hisse ekranı için üst zaman dilimi bağlamını güvenli şekilde getirir."""
+    confirm_tf = confirmation_timeframe(timeframe)
+
+    if confirm_tf is None:
+        return {
+            "available": False,
+            "timeframe": None,
+            "reason": "Günlük zaman diliminin üst teyidi bu sürümde kullanılmıyor.",
+            "context": None,
+        }
+
+    cache_key = f"mtf_context:{symbol}:{confirm_tf}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    ticker = f"{symbol}.IS"
+
+    try:
+        period, interval = get_period_interval(confirm_tf, extended=False)
+        frame = safe_yahoo_download(
+            ticker,
+            period,
+            interval,
+            attempts=2,
+        )
+        context = _frame_to_context(frame, confirm_tf)
+
+        result = {
+            "available": context is not None,
+            "timeframe": confirm_tf,
+            "reason": None if context is not None else "Üst zaman dilimi verisi yetersiz.",
+            "context": context,
+        }
+
+        cache_set(
+            cache_key,
+            result,
+            ttl=max(60, cache_seconds_for_timeframe(confirm_tf)),
+        )
+        return result
+
+    except Exception as exc:
+        return {
+            "available": False,
+            "timeframe": confirm_tf,
+            "reason": f"Üst zaman dilimi verisi alınamadı: {exc}",
+            "context": None,
+        }
+
+
+def evaluate_multi_timeframe(pattern, higher_context_result):
+    """Formasyon yönü ile üst zaman diliminin fiyat rejimini karşılaştırır."""
+    direction = (pattern or {}).get("direction", "neutral")
+    higher_context = (higher_context_result or {}).get("context") or {}
+    regime = higher_context.get("regime") or {}
+    higher_direction = regime.get("direction", "neutral")
+
+    if not higher_context_result or not higher_context_result.get("available"):
+        return {
+            "key": "unavailable",
+            "label": "Üst Zaman Verisi Yok",
+            "score": 0,
+            "confirmed": False,
+            "timeframe": (higher_context_result or {}).get("timeframe"),
+            "higher_regime": None,
+            "higher_confidence": 0,
+        }
+
+    if direction == "neutral":
+        return {
+            "key": "neutral_pattern",
+            "label": "Nötr Formasyon",
+            "score": 0,
+            "confirmed": False,
+            "timeframe": higher_context_result.get("timeframe"),
+            "higher_regime": regime.get("label"),
+            "higher_confidence": regime.get("confidence", 0),
+        }
+
+    if higher_direction == "neutral":
+        return {
+            "key": "neutral_higher",
+            "label": "Üst Zaman Nötr",
+            "score": 0,
+            "confirmed": False,
+            "timeframe": higher_context_result.get("timeframe"),
+            "higher_regime": regime.get("label"),
+            "higher_confidence": regime.get("confidence", 0),
+        }
+
+    if direction == higher_direction:
+        return {
+            "key": "confirmed",
+            "label": "Üst Zaman Teyitli",
+            "score": 1,
+            "confirmed": True,
+            "timeframe": higher_context_result.get("timeframe"),
+            "higher_regime": regime.get("label"),
+            "higher_confidence": regime.get("confidence", 0),
+        }
+
+    return {
+        "key": "conflict",
+        "label": "Üst Zamanla Çelişkili",
+        "score": -1,
+        "confirmed": False,
+        "timeframe": higher_context_result.get("timeframe"),
+        "higher_regime": regime.get("label"),
+        "higher_confidence": regime.get("confidence", 0),
+    }
+
+
+def build_multi_timeframe_payload(pattern, higher_context_result):
+    return {
+        "confirmation_timeframe": (higher_context_result or {}).get("timeframe"),
+        "higher_context": (higher_context_result or {}).get("context"),
+        "confirmation": (
+            evaluate_multi_timeframe(pattern, higher_context_result)
+            if pattern
+            else None
+        ),
+        "available": bool((higher_context_result or {}).get("available")),
+        "reason": (higher_context_result or {}).get("reason"),
+    }
+
+
+def _scan_confirmation_batch(clean_symbols, timeframe: str):
+    """Katılım 50 taramasında üst zaman dilimini tek Yahoo batch isteğiyle alır."""
+    confirm_tf = confirmation_timeframe(timeframe)
+    if confirm_tf is None:
+        return confirm_tf, pd.DataFrame()
+
+    period, interval = _scan_period_interval(confirm_tf)
+    tickers = [f"{symbol}.IS" for symbol in clean_symbols]
+
+    try:
+        batch = safe_yahoo_batch_download(
+            tickers,
+            period=period,
+            interval=interval,
+            attempts=2,
+        )
+        return confirm_tf, batch
+    except Exception:
+        return confirm_tf, pd.DataFrame()
+
+
+def _batch_confirmation_context(batch: pd.DataFrame, ticker: str, confirm_tf: str):
+    if confirm_tf is None:
+        return {
+            "available": False,
+            "timeframe": None,
+            "reason": "Günlük zaman diliminin üst teyidi bu sürümde kullanılmıyor.",
+            "context": None,
+        }
+
+    frame = _batch_symbol_frame(batch, ticker)
+    context = _frame_to_context(frame, confirm_tf)
+
+    return {
+        "available": context is not None,
+        "timeframe": confirm_tf,
+        "reason": None if context is not None else "Üst zaman dilimi verisi yetersiz.",
+        "context": context,
+    }
+
+
+# =========================================================
 # KATILIM 50 TOPLU FORMASYON TARAMASI
 # =========================================================
 
@@ -1784,6 +2006,7 @@ def scan_symbols(
 
     try:
         batch = safe_yahoo_batch_download(tickers, period=period, interval=interval, attempts=2)
+        confirm_tf, confirm_batch = _scan_confirmation_batch(clean, timeframe)
         items = []
 
         for symbol, ticker in zip(clean, tickers):
@@ -1824,6 +2047,16 @@ def scan_symbols(
                 else None
             )
 
+            higher_context_result = _batch_confirmation_context(
+                confirm_batch,
+                ticker,
+                confirm_tf,
+            )
+            multi_timeframe = build_multi_timeframe_payload(
+                latest[-1] if latest else None,
+                higher_context_result,
+            )
+
             items.append({
                 "symbol": symbol,
                 "status": "ok",
@@ -1836,6 +2069,7 @@ def scan_symbols(
                 "signal_strength": signal_strength,
                 "market_context": market_context,
                 "context_alignment": context_alignment,
+                "multi_timeframe": multi_timeframe,
             })
 
         directional = {"bullish": 0, "bearish": 0, "neutral": 0}
@@ -1861,6 +2095,14 @@ def scan_symbols(
             "weak": 0,
             "unknown": 0,
         }
+        mtf_counts = {
+            "confirmed": 0,
+            "conflict": 0,
+            "neutral_higher": 0,
+            "neutral_pattern": 0,
+            "unavailable": 0,
+            "none": 0,
+        }
         signal_count = 0
         for item in items:
             if item.get("latest_patterns"):
@@ -1877,6 +2119,10 @@ def scan_symbols(
             regime_counts[regime_key] = regime_counts.get(regime_key, 0) + 1
             volume_counts[volume_key] = volume_counts.get(volume_key, 0) + 1
 
+            mtf_confirmation = (item.get("multi_timeframe") or {}).get("confirmation")
+            mtf_key = (mtf_confirmation or {}).get("key", "none")
+            mtf_counts[mtf_key] = mtf_counts.get(mtf_key, 0) + 1
+
         result = {
             "timeframe": timeframe,
             "source": "Yahoo Finance",
@@ -1888,6 +2134,8 @@ def scan_symbols(
             "strength_counts": strength_counts,
             "regime_counts": regime_counts,
             "volume_counts": volume_counts,
+            "multi_timeframe_counts": mtf_counts,
+            "confirmation_timeframe": confirm_tf,
             "items": items,
             "fetched_at": int(time.time()),
         }
@@ -2160,6 +2408,13 @@ def get_candles(
                 "effective_days": round(max(0, available_to - effective_from) / 86400, 1),
             })
 
+        market_context = analyze_market_context(analysis_candles, timeframe)
+        higher_context_result = fetch_confirmation_context(symbol, timeframe)
+        multi_timeframe = build_multi_timeframe_payload(
+            current_patterns[-1] if current_patterns else None,
+            higher_context_result,
+        )
+
         result = {
             "symbol": symbol,
 
@@ -2191,17 +2446,20 @@ def get_candles(
                 current_patterns,
 
             "market_context":
-                analyze_market_context(analysis_candles, timeframe),
+                market_context,
 
             "current_pattern_context":
                 (
                     pattern_context_alignment(
                         current_patterns[-1],
-                        analyze_market_context(analysis_candles, timeframe),
+                        market_context,
                     )
                     if current_patterns
                     else None
                 ),
+
+            "multi_timeframe":
+                multi_timeframe,
 
             "patterns":
                 patterns,
