@@ -2763,3 +2763,125 @@ body {
     max-height: none !important;
   }
 }
+
+
+/* =========================================================
+   V21.4 — MASAÜSTÜNDE BİR TIK DAHA BÜYÜK ÖLÇEK
+   Referans görseldeki doluluk oranına yaklaşmak için yaklaşık
+   %8-12 görsel büyütme. Mantık/veri tarafına dokunmaz.
+   ========================================================= */
+
+@media (min-width: 1200px) {
+  .dashboard-grid {
+    grid-template-columns: 270px minmax(720px, 1fr) 330px !important;
+    gap: 10px !important;
+  }
+
+  .watchlist {
+    padding-left: 9px !important;
+    padding-right: 9px !important;
+  }
+
+  .watchlist-title strong { font-size: 18px !important; }
+  .stock-row { min-height: 31px !important; }
+  .stock-symbol { font-size: 10px !important; }
+  .stock-price,
+  .stock-change { font-size: 10px !important; }
+
+  .v21-instrument-header {
+    min-height: 106px !important;
+    padding: 14px 18px !important;
+  }
+
+  .ticker-avatar {
+    width: 58px !important;
+    height: 58px !important;
+    flex-basis: 58px !important;
+  }
+
+  .ticker-title-row h2 { font-size: 24px !important; }
+  .instrument-price strong { font-size: 31px !important; }
+  .instrument-price em { font-size: 16px !important; }
+
+  .workspace-tabs {
+    height: 42px !important;
+    min-height: 42px !important;
+  }
+
+  .workspace-tabs button {
+    height: 41px !important;
+    min-height: 41px !important;
+    padding: 0 16px !important;
+    font-size: 9px !important;
+  }
+
+  .v21-chart-controlbar {
+    min-height: 46px !important;
+  }
+
+  .v21-chart-controlbar .timeframes button,
+  .v21-chart-controlbar .data-ranges button {
+    height: 32px !important;
+    min-height: 32px !important;
+    padding: 0 12px !important;
+    font-size: 9px !important;
+  }
+
+  .data-health-strip > div {
+    min-height: 28px !important;
+    font-size: 8px !important;
+  }
+
+  .chart-card > div:first-child {
+    height: 540px !important;
+    min-height: 540px !important;
+    max-height: 540px !important;
+  }
+
+  .chart-card > div:first-child > div:last-child {
+    height: 494px !important;
+    min-height: 494px !important;
+    max-height: 494px !important;
+  }
+
+  .v21-market-metrics > div {
+    min-height: 58px !important;
+    padding: 9px 11px !important;
+  }
+
+  .v21-market-metrics span { font-size: 8px !important; }
+  .v21-market-metrics strong { font-size: 13px !important; }
+
+  .insights {
+    gap: 9px !important;
+  }
+
+  .insight-card {
+    padding: 13px !important;
+  }
+}
+
+/* Tarayıcı kullanılabilir yüksekliği 950px civarındaysa da
+   V21.3'teki fazla küçültmeyi geri al. */
+@media (min-width: 1200px) and (max-height: 950px) {
+  .v21-instrument-header {
+    min-height: 100px !important;
+    padding: 12px 16px !important;
+  }
+
+  .chart-card > div:first-child {
+    height: 510px !important;
+    min-height: 510px !important;
+    max-height: 510px !important;
+  }
+
+  .chart-card > div:first-child > div:last-child {
+    height: 464px !important;
+    min-height: 464px !important;
+    max-height: 464px !important;
+  }
+
+  .v21-market-metrics > div {
+    min-height: 55px !important;
+  }
+}
