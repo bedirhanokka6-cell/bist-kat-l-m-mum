@@ -1442,7 +1442,7 @@ export default function Home() {
           </div>
           <div>
             <h1>BIST Mum Formasyon Sistemi</h1>
-            <p>BIST Katılım 50 mum formasyonu tarama</p>
+            <p>BIST Katılım 50 için mum formasyonu analizi</p>
           </div>
         </div>
 
@@ -1530,7 +1530,7 @@ export default function Home() {
                   <button className={`favorite favorite-button ${favoriteSymbols.includes(selected) ? "active" : ""}`} onClick={() => toggleFavorite(selected)} title={favoriteSymbols.includes(selected) ? "Takip listesinden çıkar" : "Takip listesine ekle"}>{favoriteSymbols.includes(selected) ? "★" : "☆"}</button>
                 </div>
                 <p>{COMPANY_NAMES[selected] ?? selected}</p>
-                <div className="instrument-tags"><span>BIST Katılım 50</span><span>Hisse</span></div>
+                <div className="instrument-tags"><span>Katılım 50</span><span>Hisse</span><span>Ana Pazar</span></div>
               </div>
             </div>
 
@@ -1678,13 +1678,14 @@ export default function Home() {
                   <span>Geçmiş başarı</span>
                   <strong>{confidenceText}</strong>
                 </div>
+                <button className="latest-analysis-button" onClick={() => setActiveView("stats")}>Detaylı Analiz İzle ↗</button>
               </>
             ) : (
               <p className="empty-text">Formasyon bekleniyor...</p>
             )}
           </section>
 
-          <section className="insight-card panel">
+          <section className="insight-card panel recent-pattern-card">
             <div className="card-heading-row">
               <h3>Son Bulunan Formasyonlar</h3>
             </div>

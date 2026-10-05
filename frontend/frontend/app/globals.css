@@ -2885,3 +2885,252 @@ body {
     min-height: 55px !important;
   }
 }
+
+/* =========================================================
+   V21.5 — REFERANS GÖRSEL TAM ENTEGRASYON
+   Ana Piyasa ekranını seçilen premium mockup'a yaklaştırır.
+   Analiz, veri, tarama ve paper trading mantığına dokunmaz.
+   ========================================================= */
+
+:root {
+  --v215-panel: rgba(5, 22, 41, .94);
+  --v215-panel-2: rgba(7, 27, 49, .96);
+  --v215-line: rgba(38, 103, 165, .46);
+  --v215-glow: rgba(15, 117, 255, .25);
+}
+
+@media (min-width: 1180px) {
+  .topbar {
+    min-height: 78px !important;
+    padding: 12px 26px !important;
+    background: linear-gradient(180deg, rgba(5,22,39,.98), rgba(3,17,31,.98)) !important;
+    border-bottom: 1px solid rgba(35, 91, 145, .45) !important;
+  }
+
+  .brand h1 { font-size: 20px !important; }
+  .brand p { font-size: 11px !important; }
+  .main-nav { gap: 9px !important; }
+  .main-nav button {
+    min-height: 42px !important;
+    padding: 0 17px !important;
+    border-radius: 10px !important;
+  }
+  .main-nav button.active {
+    background: linear-gradient(180deg, #0f65d7, #084aa8) !important;
+    box-shadow: 0 0 24px rgba(20,116,255,.22), inset 0 0 0 1px rgba(73,170,255,.48) !important;
+  }
+
+  .notify-button { display: none !important; }
+  .notification-center-button,
+  .icon-button,
+  .avatar-button { width: 40px !important; height: 40px !important; }
+
+  .dashboard-grid {
+    grid-template-columns: 310px minmax(760px, 1fr) 350px !important;
+    gap: 14px !important;
+    padding: 14px !important;
+    max-width: 1920px;
+    margin: 0 auto;
+  }
+
+  .panel {
+    border-color: rgba(45, 108, 169, .44) !important;
+    background: linear-gradient(180deg, rgba(7,26,46,.97), rgba(4,18,34,.98)) !important;
+    box-shadow: inset 0 1px rgba(255,255,255,.018), 0 14px 40px rgba(0,0,0,.16) !important;
+    border-radius: 14px !important;
+  }
+
+  .watchlist {
+    padding: 13px 11px !important;
+    min-height: 810px !important;
+  }
+  .watchlist-title strong { font-size: 18px !important; }
+  .watchlist-title span { font-size: 9px !important; }
+  .search-box { height: 42px !important; border-radius: 9px !important; }
+  .stock-columns { margin-top: 10px !important; }
+  .stock-list { margin-top: 4px !important; max-height: 690px !important; }
+  .stock-row { min-height: 30px !important; border-radius: 7px !important; }
+  .stock-row.active {
+    background: linear-gradient(90deg, rgba(15,95,214,.62), rgba(13,64,129,.35)) !important;
+    border: 1px solid #1988ff !important;
+    box-shadow: 0 0 16px rgba(12,111,255,.18) !important;
+  }
+
+  .workspace {
+    padding: 0 12px 12px !important;
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .v21-instrument-header {
+    min-height: 120px !important;
+    margin: 0 0 12px !important;
+    padding: 16px 18px !important;
+    grid-template-columns: minmax(330px, 1.25fr) 210px minmax(275px, .95fr) 155px !important;
+    gap: 15px !important;
+    border: 1px solid rgba(45, 108, 169, .5) !important;
+    border-radius: 14px !important;
+    background:
+      radial-gradient(circle at 36% -80%, rgba(92, 49, 226, .48), transparent 50%),
+      linear-gradient(105deg, rgba(5,26,48,.98), rgba(12,29,79,.95) 53%, rgba(4,24,43,.98)) !important;
+    box-shadow: 0 0 28px rgba(36,80,180,.08), inset 0 1px rgba(255,255,255,.03) !important;
+  }
+  .ticker-avatar { width: 62px !important; height: 62px !important; flex-basis: 62px !important; font-size: 22px !important; }
+  .ticker-title-row h2 { font-size: 26px !important; }
+  .instrument-identity p { font-size: 13px !important; }
+  .instrument-tags span { min-height: 24px !important; padding: 0 9px !important; border-radius: 7px !important; }
+  .instrument-tags span:last-child { color: #36e4a4 !important; border-color: rgba(26,210,144,.45) !important; }
+
+  .instrument-price strong { font-size: 34px !important; }
+  .instrument-price em { font-size: 17px !important; }
+  .instrument-price span { margin-top: 4px !important; }
+
+  .instrument-quick-stats { gap: 0 !important; }
+  .instrument-quick-stats > div {
+    min-height: 64px !important;
+    padding: 8px 12px !important;
+    border-left: 1px solid rgba(62,110,157,.20) !important;
+  }
+  .instrument-quick-stats span { font-size: 9px !important; }
+  .instrument-quick-stats strong { font-size: 12px !important; }
+
+  .momentum-card {
+    min-height: 82px !important;
+    border-radius: 11px !important;
+    background: linear-gradient(180deg, rgba(7,93,77,.62), rgba(4,59,55,.54)) !important;
+    border-color: rgba(27,215,154,.36) !important;
+  }
+
+  .workspace-tabs {
+    height: 48px !important;
+    min-height: 48px !important;
+    padding-left: 4px !important;
+    border-bottom: 1px solid rgba(47,92,137,.28) !important;
+  }
+  .workspace-tabs button {
+    height: 47px !important;
+    min-height: 47px !important;
+    padding: 0 19px !important;
+    font-size: 10px !important;
+  }
+  .workspace-tabs button.active {
+    background: linear-gradient(180deg, rgba(16,103,225,.26), rgba(4,52,111,.30)) !important;
+    border-bottom: 2px solid #19a2ff !important;
+  }
+
+  .v21-chart-controlbar {
+    min-height: 45px !important;
+    padding: 6px 0 !important;
+    border-bottom: 0 !important;
+  }
+  .v21-chart-controlbar .chart-controls { justify-content: flex-end !important; }
+  .v21-chart-controlbar .timeframes button,
+  .v21-chart-controlbar .data-ranges button {
+    min-height: 32px !important;
+    height: 32px !important;
+    padding: 0 12px !important;
+    font-size: 9px !important;
+    border-radius: 8px !important;
+  }
+  .v21-chart-controlbar button.active {
+    background: linear-gradient(180deg, #1684ff, #075fd4) !important;
+    border-color: #2198ff !important;
+    box-shadow: 0 0 16px rgba(22,132,255,.20) !important;
+  }
+
+  .data-health-strip { display: none !important; }
+
+  .chart-card {
+    margin-top: 0 !important;
+    padding: 10px 10px 0 !important;
+    border: 1px solid rgba(45,108,169,.46) !important;
+    border-radius: 14px !important;
+    background: linear-gradient(180deg, rgba(5,24,44,.98), rgba(3,17,32,.98)) !important;
+  }
+  .chart-card > div:first-child {
+    height: 525px !important;
+    min-height: 525px !important;
+    max-height: 525px !important;
+  }
+  .chart-card > div:first-child > div:last-child {
+    height: 484px !important;
+    min-height: 484px !important;
+    max-height: 484px !important;
+  }
+  .chart-bottom-toolbar { display: none !important; }
+
+  .v21-market-metrics {
+    margin-top: 12px !important;
+    border: 1px solid rgba(45,108,169,.42) !important;
+    border-radius: 13px !important;
+    overflow: hidden;
+    background: linear-gradient(180deg, rgba(8,29,51,.98), rgba(5,22,40,.98)) !important;
+  }
+  .v21-market-metrics > div {
+    min-height: 74px !important;
+    padding: 13px 15px !important;
+    border-right: 1px solid rgba(56,105,152,.22) !important;
+  }
+  .v21-market-metrics span { font-size: 10px !important; }
+  .v21-market-metrics strong { font-size: 16px !important; }
+
+  .insights {
+    gap: 12px !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  .insights > .insight-card:first-child { order: 1; }
+  .insights > .signal-card { order: 2; }
+  .insights > .recent-pattern-card { order: 3; }
+  .insights > .paper-card { display: none !important; }
+
+  .insight-card {
+    padding: 15px !important;
+    border-radius: 14px !important;
+  }
+  .insight-card h3 { font-size: 17px !important; }
+  .latest-pattern-row { margin-top: 12px !important; gap: 12px !important; }
+  .latest-pattern-row strong { font-size: 18px !important; color: #21e6a0 !important; }
+  .pattern-description { line-height: 1.55 !important; font-size: 11px !important; }
+  .mini-stat-row { min-height: 38px !important; font-size: 11px !important; }
+
+  .latest-analysis-button {
+    width: 100%;
+    min-height: 43px;
+    margin-top: 12px;
+    border: 1px solid #1686ff;
+    border-radius: 9px;
+    color: white;
+    background: linear-gradient(180deg, rgba(14,111,239,.92), rgba(7,72,170,.96));
+    box-shadow: 0 0 20px rgba(18,112,255,.18), inset 0 1px rgba(255,255,255,.08);
+    cursor: pointer;
+    font-weight: 800;
+  }
+
+  .signal-grid { gap: 7px !important; }
+  .signal-cell { min-height: 82px !important; border-radius: 10px !important; }
+  .signal-note { display: none !important; }
+
+  .recent-list { gap: 0 !important; }
+  .recent-item { min-height: 58px !important; border-bottom: 1px solid rgba(55,100,145,.20) !important; }
+  .rank-bubble { width: 35px !important; height: 35px !important; }
+}
+
+@media (min-width: 1180px) and (max-height: 960px) {
+  .topbar { min-height: 70px !important; padding-top: 9px !important; padding-bottom: 9px !important; }
+  .dashboard-grid { padding-top: 10px !important; }
+  .v21-instrument-header { min-height: 104px !important; padding-top: 12px !important; padding-bottom: 12px !important; }
+  .workspace-tabs { height: 42px !important; min-height: 42px !important; }
+  .workspace-tabs button { height: 41px !important; min-height: 41px !important; }
+  .v21-chart-controlbar { min-height: 40px !important; }
+  .chart-card > div:first-child { height: 470px !important; min-height: 470px !important; max-height: 470px !important; }
+  .chart-card > div:first-child > div:last-child { height: 430px !important; min-height: 430px !important; max-height: 430px !important; }
+  .v21-market-metrics > div { min-height: 64px !important; padding-top: 10px !important; padding-bottom: 10px !important; }
+}
+
+@media (max-width: 1450px) and (min-width: 1180px) {
+  .dashboard-grid { grid-template-columns: 265px minmax(700px,1fr) 305px !important; }
+  .v21-instrument-header { grid-template-columns: minmax(270px,1fr) 175px minmax(240px,.9fr) !important; }
+  .momentum-card { display: none !important; }
+}
