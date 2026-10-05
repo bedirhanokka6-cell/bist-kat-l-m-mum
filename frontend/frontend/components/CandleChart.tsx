@@ -181,13 +181,22 @@ export default function CandleChart({
         vertLines: { color: "#172033" },
         horzLines: { color: "#172033" },
       },
-      rightPriceScale: { borderColor: "#1d3955" },
+      rightPriceScale: {
+        borderColor: "#1d3955",
+        autoScale: true,
+        scaleMargins: {
+          top: 0.06,
+          bottom: 0.24,
+        },
+      },
       timeScale: {
         borderColor: "#1d3955",
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 8,
-        barSpacing: 9,
+        rightOffset: 5,
+        barSpacing: 10,
+        fixLeftEdge: false,
+        fixRightEdge: false,
       },
       crosshair: { mode: CrosshairMode.Normal },
     });
@@ -205,7 +214,10 @@ export default function CandleChart({
       priceScaleId: "volume",
     });
 
-    chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    chart.priceScale("volume").applyOptions({
+      scaleMargins: { top: 0.80, bottom: 0 },
+      autoScale: true,
+    });
 
     let markerApi: ISeriesMarkersPluginApi<Time> | null = null;
     let latestRows: Candle[] = [];
@@ -277,6 +289,8 @@ export default function CandleChart({
 
         const staleText = data.data_status === "stale" ? " • son başarılı veri" : "";
         setStatus(`${rangeLabel(dataRange)} veri • ${visibleRows.length} mum • ${visiblePatterns.length} formasyon${staleText}`);
+        // Yatayda tüm görünür mumları ekrana sığdır.
+        // Dikey fiyat ölçeği rightPriceScale.autoScale ile otomatik merkezlenir.
         chart.timeScale().fitContent();
       } catch (error) {
         if (controller.signal.aborted) return;
