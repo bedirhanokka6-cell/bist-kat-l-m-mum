@@ -1529,6 +1529,186 @@ def get_quotes(symbols: str = Query(..., description="Virgülle ayrılmış semb
 
 
 # =========================================================
+# V22.1 — PİYASA REJİMİ + HACİM TEYİDİ
+# =========================================================
+
+def _avg(values):
+    values = [float(v) for v in values if v is not None]
+    return (sum(values) / len(values)) if values else None
+
+
+def analyze_market_context(candles, timeframe):
+    """Son kapanmış mumlardan fiyat rejimi ve hacim teyidi üretir.
+
+    Bu katman formasyon tespitini değiştirmez; yalnızca bağlam sağlar.
+    RSI/EMA/MACD kullanılmaz. Hesaplar fiyat yolu, mum aralığı ve hacimden gelir.
+    """
+    closed = [
+        c for c in candles
+        if candle_is_closed(c, timeframe)
+    ]
+
+    if len(closed) < 8:
+        return {
+            "regime": {
+                "key": "unknown",
+                "label": "Yetersiz Veri",
+                "confidence": 0,
+                "direction": "neutral",
+            },
+            "volume": {
+                "key": "unknown",
+                "label": "Yetersiz Veri",
+                "ratio": None,
+                "current": None,
+                "baseline": None,
+                "supported": False,
+            },
+        }
+
+    window = closed[-min(20, len(closed)):]
+    closes = [float(c["close"]) for c in window]
+    highs = [float(c["high"]) for c in window]
+    lows = [float(c["low"]) for c in window]
+
+    first_close = closes[0]
+    last_close = closes[-1]
+
+    path = sum(abs(closes[i] - closes[i - 1]) for i in range(1, len(closes)))
+    net_move = last_close - first_close
+    efficiency = abs(net_move) / max(path, EPSILON)
+
+    ranges = [
+        max(highs[i] - lows[i], 0.0)
+        for i in range(len(window))
+    ]
+    avg_range = _avg(ranges) or 0.0
+    move_in_ranges = abs(net_move) / max(avg_range, EPSILON)
+
+    up_steps = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i - 1])
+    down_steps = sum(1 for i in range(1, len(closes)) if closes[i] < closes[i - 1])
+
+    range_pct = [
+        ((highs[i] - lows[i]) / max(closes[i], EPSILON)) * 100
+        for i in range(len(window))
+    ]
+    long_volatility = _avg(range_pct) or 0.0
+    short_volatility = _avg(range_pct[-min(6, len(range_pct)):]) or long_volatility
+    volatility_ratio = short_volatility / max(long_volatility, EPSILON)
+
+    # Önce sıra dışı volatiliteyi ayır; sonra yönlü/yatay rejimi değerlendir.
+    if volatility_ratio >= 1.45 and short_volatility >= 0.25:
+        regime_key = "high_volatility"
+        regime_label = "Yüksek Volatilite"
+        regime_direction = "neutral"
+        confidence = min(100, round(60 + min((volatility_ratio - 1.45) * 55, 40)))
+    elif net_move > 0 and move_in_ranges >= 1.8 and efficiency >= 0.30 and up_steps >= down_steps:
+        regime_key = "uptrend"
+        regime_label = "Yükseliş Trendi"
+        regime_direction = "bullish"
+        confidence = min(100, round(55 + efficiency * 30 + min(move_in_ranges, 4) * 4))
+    elif net_move < 0 and move_in_ranges >= 1.8 and efficiency >= 0.30 and down_steps >= up_steps:
+        regime_key = "downtrend"
+        regime_label = "Düşüş Trendi"
+        regime_direction = "bearish"
+        confidence = min(100, round(55 + efficiency * 30 + min(move_in_ranges, 4) * 4))
+    else:
+        regime_key = "sideways"
+        regime_label = "Yatay / Kararsız"
+        regime_direction = "neutral"
+        confidence = min(100, round(58 + (1 - min(efficiency, 1)) * 24))
+
+    current_volume = float(closed[-1].get("volume") or 0.0)
+    previous_volumes = [
+        float(c.get("volume") or 0.0)
+        for c in closed[-21:-1]
+        if float(c.get("volume") or 0.0) > 0
+    ]
+
+    baseline_volume = median(previous_volumes) if previous_volumes else None
+    volume_ratio = (
+        current_volume / baseline_volume
+        if baseline_volume and baseline_volume > 0
+        else None
+    )
+
+    if volume_ratio is None:
+        volume_key = "unknown"
+        volume_label = "Hacim Verisi Yetersiz"
+        volume_supported = False
+    elif volume_ratio >= 1.50:
+        volume_key = "strong"
+        volume_label = "Güçlü Hacim"
+        volume_supported = True
+    elif volume_ratio >= 1.20:
+        volume_key = "supported"
+        volume_label = "Hacim Destekli"
+        volume_supported = True
+    elif volume_ratio >= 0.80:
+        volume_key = "normal"
+        volume_label = "Normal Hacim"
+        volume_supported = False
+    else:
+        volume_key = "weak"
+        volume_label = "Zayıf Hacim"
+        volume_supported = False
+
+    return {
+        "regime": {
+            "key": regime_key,
+            "label": regime_label,
+            "direction": regime_direction,
+            "confidence": int(confidence),
+            "net_move_pct": round(((last_close / max(first_close, EPSILON)) - 1) * 100, 3),
+            "efficiency": round(efficiency, 3),
+            "move_in_ranges": round(move_in_ranges, 2),
+            "volatility_ratio": round(volatility_ratio, 2),
+        },
+        "volume": {
+            "key": volume_key,
+            "label": volume_label,
+            "ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
+            "current": round(current_volume, 2),
+            "baseline": round(float(baseline_volume), 2) if baseline_volume is not None else None,
+            "supported": volume_supported,
+        },
+    }
+
+
+def pattern_context_alignment(pattern, market_context):
+    """Formasyon yönünün mevcut fiyat rejimiyle uyumunu açıklar."""
+    direction = (pattern or {}).get("direction", "neutral")
+    regime_direction = ((market_context or {}).get("regime") or {}).get("direction", "neutral")
+
+    if direction == "neutral":
+        return {
+            "key": "neutral",
+            "label": "Nötr Formasyon",
+            "score": 0,
+        }
+
+    if regime_direction == "neutral":
+        return {
+            "key": "neutral_regime",
+            "label": "Rejim Nötr",
+            "score": 0,
+        }
+
+    if direction == regime_direction:
+        return {
+            "key": "aligned",
+            "label": "Trend Uyumlu",
+            "score": 1,
+        }
+
+    return {
+        "key": "counter_trend",
+        "label": "Trende Ters",
+        "score": -1,
+    }
+
+
+# =========================================================
 # KATILIM 50 TOPLU FORMASYON TARAMASI
 # =========================================================
 
@@ -1637,6 +1817,12 @@ def scan_symbols(
 
             local_backtest = calculate_backtest(candles, found, timeframe)
             signal_strength = _historical_signal_strength(local_backtest, latest)
+            market_context = analyze_market_context(candles, timeframe)
+            context_alignment = (
+                pattern_context_alignment(latest[-1], market_context)
+                if latest
+                else None
+            )
 
             items.append({
                 "symbol": symbol,
@@ -1648,6 +1834,8 @@ def scan_symbols(
                 "last_candle_time": candles[-1]["time"] if candles else None,
                 "last_closed_time": last_closed,
                 "signal_strength": signal_strength,
+                "market_context": market_context,
+                "context_alignment": context_alignment,
             })
 
         directional = {"bullish": 0, "bearish": 0, "neutral": 0}
@@ -1659,6 +1847,20 @@ def scan_symbols(
             "neutral": 0,
             "none": 0,
         }
+        regime_counts = {
+            "uptrend": 0,
+            "downtrend": 0,
+            "sideways": 0,
+            "high_volatility": 0,
+            "unknown": 0,
+        }
+        volume_counts = {
+            "strong": 0,
+            "supported": 0,
+            "normal": 0,
+            "weak": 0,
+            "unknown": 0,
+        }
         signal_count = 0
         for item in items:
             if item.get("latest_patterns"):
@@ -1669,6 +1871,12 @@ def scan_symbols(
             strength_label = (item.get("signal_strength") or {}).get("label", "none")
             strength_counts[strength_label] = strength_counts.get(strength_label, 0) + 1
 
+            context = item.get("market_context") or {}
+            regime_key = (context.get("regime") or {}).get("key", "unknown")
+            volume_key = (context.get("volume") or {}).get("key", "unknown")
+            regime_counts[regime_key] = regime_counts.get(regime_key, 0) + 1
+            volume_counts[volume_key] = volume_counts.get(volume_key, 0) + 1
+
         result = {
             "timeframe": timeframe,
             "source": "Yahoo Finance",
@@ -1678,6 +1886,8 @@ def scan_symbols(
             "symbols_with_signal": signal_count,
             "direction_counts": directional,
             "strength_counts": strength_counts,
+            "regime_counts": regime_counts,
+            "volume_counts": volume_counts,
             "items": items,
             "fetched_at": int(time.time()),
         }
@@ -1979,6 +2189,19 @@ def get_candles(
 
             "current_patterns":
                 current_patterns,
+
+            "market_context":
+                analyze_market_context(analysis_candles, timeframe),
+
+            "current_pattern_context":
+                (
+                    pattern_context_alignment(
+                        current_patterns[-1],
+                        analyze_market_context(analysis_candles, timeframe),
+                    )
+                    if current_patterns
+                    else None
+                ),
 
             "patterns":
                 patterns,
