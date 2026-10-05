@@ -1553,7 +1553,16 @@ export default function Home() {
               <strong>{momentumLabel}</strong>
               <small>{selectedChange == null ? "Piyasa verisi bekleniyor." : selectedChange > 0.25 ? "Günlük fiyat hareketi pozitif." : selectedChange < -0.25 ? "Günlük fiyat hareketi negatif." : "Fiyat hareketi dengeli."}</small>
             </div>
+          </div>
 
+          <div className="workspace-tabs">
+            <button>⌂ <span>Genel Bakış</span></button>
+            <button className="active">▥ <span>Mum Formasyonları</span></button>
+            <button>▥ <span>Hacim</span></button>
+            <button>⌁ <span>Teknik Göstergeler</span></button>
+          </div>
+
+          <div className="v21-chart-controlbar">
             <div className="chart-controls">
               <div className="timeframes">
                 {[
@@ -1574,40 +1583,13 @@ export default function Home() {
               </div>
 
               <div className="data-ranges" aria-label="Grafikte gösterilecek veri aralığı">
-                <span>Veri</span>
-                <button
-                  className={dataRange === "1d" ? "active" : ""}
-                  onClick={() => setDataRange("1d")}
-                >
-                  1 Gün
-                </button>
-                <button
-                  className={dataRange === "2w" ? "active" : ""}
-                  onClick={() => setDataRange("2w")}
-                >
-                  2 Hafta
-                </button>
-                <button
-                  className={dataRange === "1mo" ? "active" : ""}
-                  onClick={() => setDataRange("1mo")}
-                >
-                  1 Ay
-                </button>
-                <button
-                  className={dataRange === "2mo" ? "active" : ""}
-                  onClick={() => setDataRange("2mo")}
-                >
-                  2 Ay
-                </button>
+                <span>VERİ</span>
+                <button className={dataRange === "1d" ? "active" : ""} onClick={() => setDataRange("1d")}>1 Gün</button>
+                <button className={dataRange === "2w" ? "active" : ""} onClick={() => setDataRange("2w")}>2 Hafta</button>
+                <button className={dataRange === "1mo" ? "active" : ""} onClick={() => setDataRange("1mo")}>1 Ay</button>
+                <button className={dataRange === "2mo" ? "active" : ""} onClick={() => setDataRange("2mo")}>2 Ay</button>
               </div>
             </div>
-          </div>
-
-          <div className="workspace-tabs">
-            <button>⌂ <span>Genel Bakış</span></button>
-            <button className="active">▥ <span>Mum Formasyonları</span></button>
-            <button>▥ <span>Hacim</span></button>
-            <button>⌁ <span>Teknik Göstergeler</span></button>
           </div>
 
           <div className="data-health-strip">
