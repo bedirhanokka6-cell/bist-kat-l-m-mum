@@ -1442,7 +1442,7 @@ export default function Home() {
           </div>
           <div>
             <h1>BIST Mum Formasyon Sistemi</h1>
-            <p>BIST Katılım 50 için mum formasyonu analizi</p>
+            <p>BIST Katılım 50 mum formasyonu tarama</p>
           </div>
         </div>
 
@@ -1530,7 +1530,7 @@ export default function Home() {
                   <button className={`favorite favorite-button ${favoriteSymbols.includes(selected) ? "active" : ""}`} onClick={() => toggleFavorite(selected)} title={favoriteSymbols.includes(selected) ? "Takip listesinden çıkar" : "Takip listesine ekle"}>{favoriteSymbols.includes(selected) ? "★" : "☆"}</button>
                 </div>
                 <p>{COMPANY_NAMES[selected] ?? selected}</p>
-                <div className="instrument-tags"><span>Katılım 50</span><span>Hisse</span><span>Ana Pazar</span></div>
+                <div className="instrument-tags"><span>BIST Katılım 50</span><span>Hisse</span></div>
               </div>
             </div>
 
@@ -1553,16 +1553,7 @@ export default function Home() {
               <strong>{momentumLabel}</strong>
               <small>{selectedChange == null ? "Piyasa verisi bekleniyor." : selectedChange > 0.25 ? "Günlük fiyat hareketi pozitif." : selectedChange < -0.25 ? "Günlük fiyat hareketi negatif." : "Fiyat hareketi dengeli."}</small>
             </div>
-          </div>
 
-          <div className="workspace-tabs">
-            <button>⌂ <span>Genel Bakış</span></button>
-            <button className="active">▥ <span>Mum Formasyonları</span></button>
-            <button>▥ <span>Hacim</span></button>
-            <button>⌁ <span>Teknik Göstergeler</span></button>
-          </div>
-
-          <div className="v21-chart-controlbar">
             <div className="chart-controls">
               <div className="timeframes">
                 {[
@@ -1583,13 +1574,40 @@ export default function Home() {
               </div>
 
               <div className="data-ranges" aria-label="Grafikte gösterilecek veri aralığı">
-                <span>VERİ</span>
-                <button className={dataRange === "1d" ? "active" : ""} onClick={() => setDataRange("1d")}>1 Gün</button>
-                <button className={dataRange === "2w" ? "active" : ""} onClick={() => setDataRange("2w")}>2 Hafta</button>
-                <button className={dataRange === "1mo" ? "active" : ""} onClick={() => setDataRange("1mo")}>1 Ay</button>
-                <button className={dataRange === "2mo" ? "active" : ""} onClick={() => setDataRange("2mo")}>2 Ay</button>
+                <span>Veri</span>
+                <button
+                  className={dataRange === "1d" ? "active" : ""}
+                  onClick={() => setDataRange("1d")}
+                >
+                  1 Gün
+                </button>
+                <button
+                  className={dataRange === "2w" ? "active" : ""}
+                  onClick={() => setDataRange("2w")}
+                >
+                  2 Hafta
+                </button>
+                <button
+                  className={dataRange === "1mo" ? "active" : ""}
+                  onClick={() => setDataRange("1mo")}
+                >
+                  1 Ay
+                </button>
+                <button
+                  className={dataRange === "2mo" ? "active" : ""}
+                  onClick={() => setDataRange("2mo")}
+                >
+                  2 Ay
+                </button>
               </div>
             </div>
+          </div>
+
+          <div className="workspace-tabs">
+            <button>⌂ <span>Genel Bakış</span></button>
+            <button className="active">▥ <span>Mum Formasyonları</span></button>
+            <button>▥ <span>Hacim</span></button>
+            <button>⌁ <span>Teknik Göstergeler</span></button>
           </div>
 
           <div className="data-health-strip">
@@ -1678,14 +1696,13 @@ export default function Home() {
                   <span>Geçmiş başarı</span>
                   <strong>{confidenceText}</strong>
                 </div>
-                <button className="latest-analysis-button" onClick={() => setActiveView("stats")}>Detaylı Analiz İzle ↗</button>
               </>
             ) : (
               <p className="empty-text">Formasyon bekleniyor...</p>
             )}
           </section>
 
-          <section className="insight-card panel recent-pattern-card">
+          <section className="insight-card panel">
             <div className="card-heading-row">
               <h3>Son Bulunan Formasyonlar</h3>
             </div>
