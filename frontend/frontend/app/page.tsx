@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import CandleChart, { MarketSnapshot, Pattern } from "@/components/CandleChart";
+import CandleChart, { MarketSnapshot, Pattern, SignalMetaSnapshot } from "@/components/CandleChart";
 import { API_BASE_URL } from "@/lib/api";
 
 const KATILIM_50_MAY_SEP_2026 = [
@@ -367,6 +367,7 @@ export default function Home() {
   const [statsMinSamples, setStatsMinSamples] = useState(20);
   const [statsSort, setStatsSort] = useState<"score" | "success" | "samples" | "rr">("score");
   const [marketSnapshot, setMarketSnapshot] = useState<MarketSnapshot | null>(null);
+  const [signalMeta, setSignalMeta] = useState<SignalMetaSnapshot | null>(null);
   const [paperEnabled, setPaperEnabled] = useState(false);
   const [paperTrades, setPaperTrades] = useState<PaperTrade[]>([]);
   const [paperLoaded, setPaperLoaded] = useState(false);
@@ -714,11 +715,13 @@ export default function Home() {
       }
     }
 
-    loadPrices();
-    // 50 hisselik yan liste seçili grafikten daha yavaş yenilenir.
+    // Seçili grafik ilk sırada yüklensin; 50 hisselik toplu fiyat çağrısı
+    // Render/Yahoo kilidini ilk açılışta meşgul etmesin.
+    const initialPricesTimer = window.setTimeout(loadPrices, 1800);
     const interval = window.setInterval(loadPrices, 60000);
     return () => {
       active = false;
+      window.clearTimeout(initialPricesTimer);
       clearInterval(interval);
     };
   }, []);
@@ -727,6 +730,7 @@ export default function Home() {
     setPatterns([]);
     setBacktest(null);
     setMarketSnapshot(null);
+    setSignalMeta(null);
   }, [selected, timeframe, dataRange]);
 
   const handlePatternsChange = useCallback((symbol: string, value: Pattern[]) => {
@@ -746,11 +750,17 @@ export default function Home() {
     }
   }, [selected]);
 
+  const handleSignalMetaChange = useCallback((meta: SignalMetaSnapshot) => {
+    if (meta.symbol !== selected || meta.timeframe !== timeframe) return;
+    setSignalMeta(meta);
+  }, [selected, timeframe]);
+
   const handleSelectStock = useCallback((symbol: string) => {
     if (symbol === selected) return;
     setPatterns([]);
     setBacktest(null);
     setMarketSnapshot(null);
+    setSignalMeta(null);
     setSelected(symbol);
   }, [selected]);
 
@@ -837,7 +847,9 @@ export default function Home() {
           );
 
           for (const pattern of candidates) {
-            const v22 = (marketSnapshot as MarketSnapshot & { confidence_v2?: ConfidenceV2 | null }).confidence_v2 ?? null;
+            const v22 = signalMeta?.symbol === marketSnapshot.symbol && signalMeta?.timeframe === marketSnapshot.timeframe
+              ? signalMeta.confidenceV2
+              : null;
             if (!v22 || v22.score < paperMinV22Score || !["A+", "A", "B"].includes(v22.grade)) continue;
 
             const duplicate = nextTrades.some(
@@ -867,8 +879,6 @@ export default function Home() {
 
             if (!best || positiveHorizons < 2) continue;
 
-            const mfe = Math.max(0, best.metric.avg_mfe_pct ?? 0);
-            const maeAbs = Math.abs(best.metric.avg_mae_pct ?? 0);
             const signalScore = v22.score;
             const signalGrade: "A+" | "A" | "B" | "C" | "D" = v22.grade;
 
@@ -927,7 +937,7 @@ export default function Home() {
 
       return changed ? nextTrades.slice(0, 200) : currentTrades;
     });
-  }, [marketSnapshot, backtest, paperEnabled, paperLoaded, paperInitialBalance, paperAllocationPct, paperRiskPct, paperMinSuccess, paperMinSamples, paperMinV22Score]);
+  }, [marketSnapshot, backtest, signalMeta, paperEnabled, paperLoaded, paperInitialBalance, paperAllocationPct, paperRiskPct, paperMinSuccess, paperMinSamples, paperMinV22Score]);
 
   useEffect(() => {
     if (!notifyEnabled || notificationStatus !== "granted" || !marketSnapshot || !backtest) return;
@@ -1050,14 +1060,12 @@ export default function Home() {
   }, [activeView, selected, timeframe, statsWindow]);
 
   const latestPattern = patterns.length ? patterns[patterns.length - 1] : null;
-  const currentV22Confidence = (marketSnapshot as MarketSnapshot & {
-    confidence_v2?: ConfidenceV2 | null;
-    shadow_v22?: ShadowDecision | null;
-  } | null)?.confidence_v2 ?? null;
-  const currentV22Shadow = (marketSnapshot as MarketSnapshot & {
-    confidence_v2?: ConfidenceV2 | null;
-    shadow_v22?: ShadowDecision | null;
-  } | null)?.shadow_v22 ?? null;
+  const currentV22Confidence = signalMeta?.symbol === selected && signalMeta?.timeframe === timeframe
+    ? (signalMeta.confidenceV2 as ConfidenceV2 | null)
+    : null;
+  const currentV22Shadow = signalMeta?.symbol === selected && signalMeta?.timeframe === timeframe
+    ? (signalMeta.shadowV22 as ShadowDecision | null)
+    : null;
   const recentPatterns = [...patterns].reverse().slice(0, 4);
   const last30 = patterns.slice(-30);
 
@@ -1264,8 +1272,16 @@ export default function Home() {
   useEffect(() => {
     scanBaselineReadyRef.current = false;
     strongSignalBaselineRef.current = new Set();
-    runMarketScan(false);
-  }, [scanTimeframe, runMarketScan]);
+    if (!autoScanEnabled) return;
+
+    // İlk sayfa açılışında 50 hisselik tarama grafiğin veri isteğiyle yarışmasın.
+    // Kullanıcı Tarama ekranına geçerse manuel buton her zaman anında çalışır.
+    const initialScanTimer = window.setTimeout(() => {
+      runMarketScan(false);
+    }, 12000);
+
+    return () => window.clearTimeout(initialScanTimer);
+  }, [scanTimeframe, runMarketScan, autoScanEnabled]);
 
   useEffect(() => {
     if (!autoScanEnabled) {
@@ -1701,6 +1717,7 @@ export default function Home() {
               onPatternsChange={handlePatternsChange}
               onBacktestChange={handleBacktestChange}
               onMarketDataChange={handleMarketDataChange}
+              onSignalMetaChange={handleSignalMetaChange}
             />
             <div className="chart-bottom-toolbar" aria-hidden="true">
               <div className="drawing-tools">

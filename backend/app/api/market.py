@@ -15,12 +15,12 @@ YF_LOCK = threading.Lock()
 
 def cache_seconds_for_timeframe(timeframe: str) -> int:
     return {
-        "10m": 5,
-        "15m": 5,
-        "1h": 15,
-        "4h": 30,
-        "1d": 60,
-    }.get(timeframe, 15)
+        "10m": 15,
+        "15m": 15,
+        "1h": 30,
+        "4h": 60,
+        "1d": 120,
+    }.get(timeframe, 30)
 
 
 # =========================================================
@@ -1889,76 +1889,6 @@ def build_multi_timeframe_payload(pattern, higher_context_result):
     }
 
 
-def _scan_confirmation_batch(clean_symbols, timeframe: str):
-    """Katılım 50 taramasında üst zaman dilimini tek Yahoo batch isteğiyle alır."""
-    confirm_tf = confirmation_timeframe(timeframe)
-    if confirm_tf is None:
-        return confirm_tf, pd.DataFrame()
-
-    period, interval = _scan_period_interval(confirm_tf)
-    tickers = [f"{symbol}.IS" for symbol in clean_symbols]
-
-    try:
-        batch = safe_yahoo_batch_download(
-            tickers,
-            period=period,
-            interval=interval,
-            attempts=2,
-        )
-        return confirm_tf, batch
-    except Exception:
-        return confirm_tf, pd.DataFrame()
-
-
-def _batch_confirmation_context(batch: pd.DataFrame, ticker: str, confirm_tf: str):
-    if confirm_tf is None:
-        return {
-            "available": False,
-            "timeframe": None,
-            "reason": "Günlük zaman diliminin üst teyidi bu sürümde kullanılmıyor.",
-            "context": None,
-        }
-
-    frame = _batch_symbol_frame(batch, ticker)
-    context = _frame_to_context(frame, confirm_tf)
-
-    return {
-        "available": context is not None,
-        "timeframe": confirm_tf,
-        "reason": None if context is not None else "Üst zaman dilimi verisi yetersiz.",
-        "context": context,
-    }
-
-
-# =========================================================
-# V22.3 — GÜVEN SKORU V2 + A+/A/B/C NOTU
-# =========================================================
-
-CONFIDENCE_WEIGHTS = {
-    "pattern_quality": 25,
-    "historical_success": 25,
-    "sample_size": 10,
-    "regime_alignment": 15,
-    "volume_confirmation": 10,
-    "multi_timeframe": 10,
-    "freshness": 5,
-}
-
-
-def _confidence_grade(score):
-    if score is None:
-        return None
-    score = float(score)
-    if score >= 85:
-        return "A+"
-    if score >= 75:
-        return "A"
-    if score >= 65:
-        return "B"
-    if score >= 55:
-        return "C"
-    return "D"
-
 
 def _signal_age_bars(candles, pattern_time):
     """Formasyonun son kapanmış muma göre kaç kapanmış mum yaşında olduğunu bulur."""
@@ -2323,7 +2253,7 @@ def scan_symbols(
 
     try:
         batch = safe_yahoo_batch_download(tickers, period=period, interval=interval, attempts=2)
-        confirm_tf, confirm_batch = _scan_confirmation_batch(clean, timeframe)
+        confirm_tf = confirmation_timeframe(timeframe)
         items = []
 
         for symbol, ticker in zip(clean, tickers):
@@ -2355,7 +2285,17 @@ def scan_symbols(
             recent = found[-5:]
             last_price = float(candles[-1]["close"]) if candles else None
 
-            local_backtest = calculate_backtest(candles, found, timeframe)
+            has_directional_signal = any(
+                p.get("direction") in {"bullish", "bearish"}
+                for p in latest
+            )
+            # Backtest en pahalı CPU adımlarından biri. Yeni yönlü sinyal yoksa
+            # 50 hissenin tamamında tekrar hesaplamak gereksiz.
+            local_backtest = (
+                calculate_backtest(candles, found, timeframe)
+                if has_directional_signal
+                else None
+            )
             signal_strength = _historical_signal_strength(local_backtest, latest)
             market_context = analyze_market_context(candles, timeframe)
             context_alignment = (
@@ -2364,11 +2304,15 @@ def scan_symbols(
                 else None
             )
 
-            higher_context_result = _batch_confirmation_context(
-                confirm_batch,
-                ticker,
-                confirm_tf,
-            )
+            if has_directional_signal:
+                higher_context_result = fetch_confirmation_context(symbol, timeframe)
+            else:
+                higher_context_result = {
+                    "available": False,
+                    "timeframe": confirm_tf,
+                    "reason": "Yönlü sinyal yok; üst zaman isteği atlanmıştır.",
+                    "context": None,
+                }
             multi_timeframe = build_multi_timeframe_payload(
                 latest[-1] if latest else None,
                 higher_context_result,
@@ -2774,7 +2718,19 @@ def get_candles(
             if current_patterns
             else None
         )
-        higher_context_result = fetch_confirmation_context(symbol, timeframe)
+        has_directional_current = any(
+            p.get("direction") in {"bullish", "bearish"}
+            for p in current_patterns
+        )
+        if has_directional_current:
+            higher_context_result = fetch_confirmation_context(symbol, timeframe)
+        else:
+            higher_context_result = {
+                "available": False,
+                "timeframe": confirmation_timeframe(timeframe),
+                "reason": "Aktif yönlü formasyon yok; üst zaman isteği atlanmıştır.",
+                "context": None,
+            }
         multi_timeframe = build_multi_timeframe_payload(
             current_patterns[-1] if current_patterns else None,
             higher_context_result,

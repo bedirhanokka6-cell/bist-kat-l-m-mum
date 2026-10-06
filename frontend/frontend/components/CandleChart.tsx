@@ -35,6 +35,32 @@ export type Candle = {
   volume: number;
 };
 
+export type ConfidenceV2Snapshot = {
+  version?: string;
+  score: number;
+  grade: "A+" | "A" | "B" | "C" | "D";
+  label?: string;
+  positives?: string[];
+  warnings?: string[];
+};
+
+export type ShadowDecisionSnapshot = {
+  eligible?: boolean;
+  status: "accept" | "watch" | "reject" | "none";
+  label?: string;
+  reason?: string;
+  score?: number;
+  grade?: "A+" | "A" | "B" | "C" | "D";
+};
+
+export type SignalMetaSnapshot = {
+  symbol: string;
+  timeframe: string;
+  confidenceV2: ConfidenceV2Snapshot | null;
+  shadowV22: ShadowDecisionSnapshot | null;
+  currentSignalStrength: unknown | null;
+};
+
 export type MarketSnapshot = {
   symbol: string;
   timeframe: string;
@@ -57,6 +83,7 @@ type Props = {
   onPatternsChange?: (symbol: string, patterns: Pattern[]) => void;
   onBacktestChange?: (symbol: string, backtest: unknown) => void;
   onMarketDataChange?: (snapshot: MarketSnapshot) => void;
+  onSignalMetaChange?: (meta: SignalMetaSnapshot) => void;
 };
 
 function toIstanbulChartTime(timestamp: number): UTCTimestamp {
@@ -144,9 +171,10 @@ function rangeLabel(range: DataRange) {
 }
 
 function refreshMs(timeframe: string) {
-  if (timeframe === "10m" || timeframe === "15m") return 5000;
-  if (timeframe === "1h") return 15000;
-  return 30000;
+  // 10/15 dakikalık mumlarda 5 saniyelik tam grafik yenilemesi gereksiz yük oluşturuyordu.
+  if (timeframe === "10m" || timeframe === "15m") return 15000;
+  if (timeframe === "1h") return 30000;
+  return 60000;
 }
 
 export default function CandleChart({
@@ -156,6 +184,7 @@ export default function CandleChart({
   onPatternsChange,
   onBacktestChange,
   onMarketDataChange,
+  onSignalMetaChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState("Veri alınıyor...");
@@ -221,6 +250,8 @@ export default function CandleChart({
 
     let markerApi: ISeriesMarkersPluginApi<Time> | null = null;
     let latestRows: Candle[] = [];
+    let latestRowsByTime = new Map<number, Candle>();
+    let hasFittedContent = false;
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.time) {
@@ -228,8 +259,7 @@ export default function CandleChart({
         return;
       }
       const unix = fromIstanbulChartTime(Number(param.time));
-      const nearest = latestRows.find((row) => Math.abs(row.time - unix) <= 1);
-      setHoverCandle(nearest ?? null);
+      setHoverCandle(latestRowsByTime.get(unix) ?? null);
     });
 
     async function loadMarketData() {
@@ -250,6 +280,7 @@ export default function CandleChart({
         const visibleTimes = new Set(visibleRows.map((row) => row.time));
         const visiblePatterns = patterns.filter((pattern) => visibleTimes.has(pattern.time));
         latestRows = visibleRows;
+        latestRowsByTime = new Map(visibleRows.map((row) => [row.time, row]));
 
         candleSeries.setData(visibleRows.map((c) => ({
           time: toIstanbulChartTime(c.time), open: c.open, high: c.high, low: c.low, close: c.close,
@@ -289,9 +320,12 @@ export default function CandleChart({
 
         const staleText = data.data_status === "stale" ? " • son başarılı veri" : "";
         setStatus(`${rangeLabel(dataRange)} veri • ${visibleRows.length} mum • ${visiblePatterns.length} formasyon${staleText}`);
-        // Yatayda tüm görünür mumları ekrana sığdır.
-        // Dikey fiyat ölçeği rightPriceScale.autoScale ile otomatik merkezlenir.
-        chart.timeScale().fitContent();
+        // İlk yüklemede görünür aralığı sığdır; her yenilemede tekrar fitContent
+        // yapmak kullanıcının zoom/scroll konumunu bozuyor ve gereksiz çizim yaptırıyordu.
+        if (!hasFittedContent) {
+          chart.timeScale().fitContent();
+          hasFittedContent = true;
+        }
       } catch (error) {
         if (controller.signal.aborted) return;
         console.warn("Grafik verisi geçici olarak alınamadı:", error);
@@ -321,14 +355,23 @@ export default function CandleChart({
         const data = await response.json();
         if (!controller.signal.aborted && (data.symbol ?? symbol) === symbol) {
           onBacktestChange?.(symbol, data.backtest ?? null);
+          onSignalMetaChange?.({
+            symbol,
+            timeframe,
+            confidenceV2: data.confidence_v2 ?? null,
+            shadowV22: data.shadow_v22 ?? null,
+            currentSignalStrength: data.current_signal_strength ?? null,
+          });
         }
       } catch {
         // Backtest canlı grafiği bloke etmez.
       }
     }
 
+    // Önce grafiği getir. Ağır backtest isteğini kısa süre erteleyerek
+    // ilk görünür grafiğin Yahoo/Render kuyruğunda beklemesini önlüyoruz.
     loadMarketData();
-    loadBacktest();
+    const initialBacktestTimer = window.setTimeout(loadBacktest, 1200);
     const marketTimer = window.setInterval(loadMarketData, refreshMs(timeframe));
     const backtestTimer = window.setInterval(loadBacktest, 15 * 60 * 1000);
 
@@ -337,12 +380,13 @@ export default function CandleChart({
 
     return () => {
       controller.abort();
+      window.clearTimeout(initialBacktestTimer);
       clearInterval(marketTimer);
       clearInterval(backtestTimer);
       resizeObserver.disconnect();
       chart.remove();
     };
-  }, [symbol, timeframe, dataRange, onPatternsChange, onBacktestChange, onMarketDataChange]);
+  }, [symbol, timeframe, dataRange, onPatternsChange, onBacktestChange, onMarketDataChange, onSignalMetaChange]);
 
   return (
     <div>

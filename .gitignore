@@ -1,3 +1,13 @@
 __pycache__/
 *.pyc
 backend/data/
+
+# Local/generated frontend artifacts
+frontend/frontend/node_modules/
+frontend/frontend/.next/
+frontend/frontend/tsconfig.tsbuildinfo
+frontend/package-lock.json
+
+# Local/editor artifacts
+*.lnk
+.DS_Store
