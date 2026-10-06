@@ -1913,6 +1913,17 @@ def _signal_age_bars(candles, pattern_time):
     return max(0, len(closed_times) - 1 - idx)
 
 
+
+CONFIDENCE_WEIGHTS = {
+    "pattern_quality": 25,
+    "historical_success": 25,
+    "sample_size": 10,
+    "regime_alignment": 15,
+    "volume_confirmation": 10,
+    "multi_timeframe": 10,
+    "freshness": 5,
+}
+
 def build_confidence_score(
     pattern,
     historical_strength,
