@@ -117,7 +117,7 @@ type PaperTrade = {
   riskPct?: number;
   riskAmount?: number;
   signalScore?: number;
-  signalGrade?: "A" | "B" | "C" | "D";
+  signalGrade?: "A+" | "A" | "B" | "C" | "D";
 };
 
 type NotificationEventType = "strong_signal" | "paper_open" | "paper_target" | "paper_stop" | "paper_close";
@@ -247,6 +247,34 @@ type SignalStrength = {
   validation_reason?: string;
 };
 
+type ConfidenceV2 = {
+  version?: string;
+  score: number;
+  grade: "A+" | "A" | "B" | "C" | "D";
+  label?: string;
+  positives?: string[];
+  warnings?: string[];
+  components?: Record<string, {
+    raw?: number;
+    weight?: number;
+    points?: number;
+    samples?: number;
+    label?: string;
+    ratio?: number | null;
+    timeframe?: string | null;
+    higher_regime?: string | null;
+  }>;
+};
+
+type ShadowDecision = {
+  eligible?: boolean;
+  status: "accept" | "watch" | "reject" | "none";
+  label?: string;
+  reason?: string;
+  score?: number;
+  grade?: "A+" | "A" | "B" | "C" | "D";
+};
+
 type ScanItem = {
   symbol: string;
   status: string;
@@ -256,6 +284,16 @@ type ScanItem = {
   pattern_count?: number;
   last_candle_time?: number | null;
   signal_strength?: SignalStrength;
+  confidence_v2?: ConfidenceV2 | null;
+  shadow_v22?: ShadowDecision | null;
+  market_context?: {
+    regime?: { key?: string; label?: string; confidence?: number; direction?: string };
+    volume?: { key?: string; label?: string; ratio?: number | null; supported?: boolean };
+  };
+  multi_timeframe?: {
+    confirmation_timeframe?: string | null;
+    confirmation?: { key?: string; label?: string; confirmed?: boolean; timeframe?: string | null; higher_regime?: string | null };
+  };
 };
 
 type ScanData = {
@@ -266,6 +304,9 @@ type ScanData = {
   symbols_with_signal: number;
   direction_counts: Record<string, number>;
   strength_counts?: Record<string, number>;
+  confidence_grade_counts?: Record<string, number>;
+  shadow_counts?: Record<string, number>;
+  shadow_mode_version?: string;
   items: ScanItem[];
   fetched_at: number;
 };
@@ -302,7 +343,10 @@ export default function Home() {
   const [scanPatternFilter, setScanPatternFilter] = useState("all");
   const [scanMinSuccess, setScanMinSuccess] = useState(0);
   const [scanMinSamples, setScanMinSamples] = useState(0);
-  const [scanSort, setScanSort] = useState<"strength" | "success" | "samples" | "newest" | "symbol">("strength");
+  const [scanGradeFilter, setScanGradeFilter] = useState<"all" | "A+" | "A" | "B" | "C" | "D">("all");
+  const [scanMinConfidence, setScanMinConfidence] = useState(0);
+  const [scanShadowFilter, setScanShadowFilter] = useState<"all" | "accept" | "watch" | "reject">("all");
+  const [scanSort, setScanSort] = useState<"confidence" | "strength" | "success" | "samples" | "newest" | "symbol">("confidence");
   const [scanData, setScanData] = useState<ScanData | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -331,6 +375,7 @@ export default function Home() {
   const [paperRiskPct, setPaperRiskPct] = useState(1);
   const [paperMinSuccess, setPaperMinSuccess] = useState(58);
   const [paperMinSamples, setPaperMinSamples] = useState(25);
+  const [paperMinV22Score] = useState(65);
   const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<"unsupported" | "default" | "granted" | "denied">("default");
   const [notificationEvents, setNotificationEvents] = useState<NotificationEvent[]>([]);
@@ -792,6 +837,9 @@ export default function Home() {
           );
 
           for (const pattern of candidates) {
+            const v22 = (marketSnapshot as MarketSnapshot & { confidence_v2?: ConfidenceV2 | null }).confidence_v2 ?? null;
+            if (!v22 || v22.score < paperMinV22Score || !["A+", "A", "B"].includes(v22.grade)) continue;
+
             const duplicate = nextTrades.some(
               (trade) => trade.symbol === marketSnapshot.symbol && trade.timeframe === marketSnapshot.timeframe && trade.entryTime === pattern.time && trade.patternName === pattern.name
             );
@@ -821,15 +869,8 @@ export default function Home() {
 
             const mfe = Math.max(0, best.metric.avg_mfe_pct ?? 0);
             const maeAbs = Math.abs(best.metric.avg_mae_pct ?? 0);
-            const rr = maeAbs > 0 ? mfe / maeAbs : 0;
-            const sampleQuality = Math.min(1, best.metric.samples / 60);
-            const successQuality = (best.metric.success_rate ?? 0) / 100;
-            const consistencyQuality = positiveHorizons / 3;
-            const rrQuality = Math.min(1, rr / 2);
-            const signalScore = Math.round((successQuality * 50 + sampleQuality * 20 + consistencyQuality * 15 + rrQuality * 15) * 10) / 10;
-            const signalGrade: "A" | "B" | "C" | "D" =
-              signalScore >= 72 ? "A" : signalScore >= 62 ? "B" : signalScore >= 55 ? "C" : "D";
-            if (signalScore < 55) continue;
+            const signalScore = v22.score;
+            const signalGrade: "A+" | "A" | "B" | "C" | "D" = v22.grade;
 
             const targetPct = clamp(best.metric.avg_mfe_pct ?? 1.5, 0.6, 4);
             const stopPct = clamp(Math.abs(best.metric.avg_mae_pct ?? -1), 0.5, 3);
@@ -886,7 +927,7 @@ export default function Home() {
 
       return changed ? nextTrades.slice(0, 200) : currentTrades;
     });
-  }, [marketSnapshot, backtest, paperEnabled, paperLoaded, paperInitialBalance, paperAllocationPct, paperRiskPct, paperMinSuccess, paperMinSamples]);
+  }, [marketSnapshot, backtest, paperEnabled, paperLoaded, paperInitialBalance, paperAllocationPct, paperRiskPct, paperMinSuccess, paperMinSamples, paperMinV22Score]);
 
   useEffect(() => {
     if (!notifyEnabled || notificationStatus !== "granted" || !marketSnapshot || !backtest) return;
@@ -1256,17 +1297,25 @@ export default function Home() {
       const strength = item.signal_strength?.label ?? (latest ? "neutral" : "none");
       const successRate = item.signal_strength?.success_rate ?? null;
       const samples = item.signal_strength?.samples ?? 0;
+      const confidence = item.confidence_v2;
+      const shadowStatus = item.shadow_v22?.status ?? "none";
 
       if (scanDirectionFilter !== "all" && latest?.direction !== scanDirectionFilter) return false;
       if (scanStrengthFilter !== "all" && strength !== scanStrengthFilter) return false;
       if (scanPatternFilter !== "all" && latest?.name !== scanPatternFilter) return false;
       if (scanMinSuccess > 0 && (successRate == null || successRate < scanMinSuccess)) return false;
       if (scanMinSamples > 0 && samples < scanMinSamples) return false;
+      if (scanGradeFilter !== "all" && confidence?.grade !== scanGradeFilter) return false;
+      if (scanMinConfidence > 0 && (confidence?.score == null || confidence.score < scanMinConfidence)) return false;
+      if (scanShadowFilter !== "all" && shadowStatus !== scanShadowFilter) return false;
       return true;
     });
 
     return filtered.sort((a, b) => {
-      if (scanSort === "success") {
+      if (scanSort === "confidence") {
+        const diff = (b.confidence_v2?.score ?? -1) - (a.confidence_v2?.score ?? -1);
+        if (diff !== 0) return diff;
+      } else if (scanSort === "success") {
         const diff = (b.signal_strength?.success_rate ?? -1) - (a.signal_strength?.success_rate ?? -1);
         if (diff !== 0) return diff;
       } else if (scanSort === "samples") {
@@ -1288,7 +1337,7 @@ export default function Home() {
       }
       return a.symbol.localeCompare(b.symbol);
     });
-  }, [scanData, scanDirectionFilter, scanStrengthFilter, scanPatternFilter, scanMinSuccess, scanMinSamples, scanSort]);
+  }, [scanData, scanDirectionFilter, scanStrengthFilter, scanPatternFilter, scanMinSuccess, scanMinSamples, scanGradeFilter, scanMinConfidence, scanShadowFilter, scanSort]);
 
   const watchRows = useMemo(() => {
     return favoriteSymbols.map((symbol) => {
@@ -1919,9 +1968,40 @@ export default function Home() {
                 </select>
               </label>
               <label>
+                <span>V22 notu</span>
+                <select value={scanGradeFilter} onChange={(e) => setScanGradeFilter(e.target.value as typeof scanGradeFilter)}>
+                  <option value="all">Tümü</option>
+                  <option value="A+">A+</option>
+                  <option value="A">A</option>
+                  <option value="B">B</option>
+                  <option value="C">C</option>
+                  <option value="D">D</option>
+                </select>
+              </label>
+              <label>
+                <span>Min. V22 puanı</span>
+                <select value={scanMinConfidence} onChange={(e) => setScanMinConfidence(Number(e.target.value))}>
+                  <option value={0}>Filtre yok</option>
+                  <option value={55}>55+</option>
+                  <option value={65}>65+</option>
+                  <option value={75}>75+</option>
+                  <option value={85}>85+</option>
+                </select>
+              </label>
+              <label>
+                <span>Shadow</span>
+                <select value={scanShadowFilter} onChange={(e) => setScanShadowFilter(e.target.value as typeof scanShadowFilter)}>
+                  <option value="all">Tümü</option>
+                  <option value="accept">Kabul</option>
+                  <option value="watch">İzle</option>
+                  <option value="reject">Red</option>
+                </select>
+              </label>
+              <label>
                 <span>Sırala</span>
                 <select value={scanSort} onChange={(e) => setScanSort(e.target.value as typeof scanSort)}>
-                  <option value="strength">Güç</option>
+                  <option value="confidence">V22 güven puanı</option>
+                  <option value="strength">Geçmiş güç</option>
                   <option value="success">Başarı oranı</option>
                   <option value="samples">Örnek sayısı</option>
                   <option value="newest">En yeni</option>
@@ -1934,7 +2014,10 @@ export default function Home() {
                 setScanPatternFilter("all");
                 setScanMinSuccess(0);
                 setScanMinSamples(0);
-                setScanSort("strength");
+                setScanGradeFilter("all");
+                setScanMinConfidence(0);
+                setScanShadowFilter("all");
+                setScanSort("confidence");
               }}>Filtreleri Sıfırla</button>
               <div className="scan-filter-result"><span>Gösterilen</span><strong>{scanRows.length}</strong></div>
             </div>
@@ -1942,6 +2025,8 @@ export default function Home() {
             <div className="scan-summary-grid">
               <div><span>Taranan</span><strong>{scanData?.symbols_scanned ?? 0}/{STOCKS.length}</strong></div>
               <div><span>Formasyon çıkan</span><strong>{scanData?.symbols_with_signal ?? 0}</strong></div>
+              <div className="strong"><span>V22 A/A+</span><strong>{(scanData?.confidence_grade_counts?.["A+"] ?? 0) + (scanData?.confidence_grade_counts?.A ?? 0)}</strong></div>
+              <div className="bullish"><span>Shadow Kabul</span><strong>{scanData?.shadow_counts?.accept ?? 0}</strong></div>
               <div className="strong"><span>Güçlü</span><strong>{scanData?.strength_counts?.strong ?? 0}</strong></div>
               <div className="medium"><span>Orta</span><strong>{scanData?.strength_counts?.medium ?? 0}</strong></div>
               <div className="bullish"><span>Yükseliş</span><strong>{scanData?.direction_counts?.bullish ?? 0}</strong></div>
@@ -1955,7 +2040,7 @@ export default function Home() {
             <div className="scan-table-wrap">
               <table className="scan-table">
                 <thead>
-                  <tr><th>Hisse</th><th>Fiyat</th><th>Son kapanmış mum</th><th>Yön</th><th>Geçmiş Güç</th><th>İstatistik</th><th>Son formasyonlar</th><th></th></tr>
+                  <tr><th>Hisse</th><th>Fiyat</th><th>Son kapanmış mum</th><th>Yön</th><th>V22 Güven</th><th>Geçmiş Güç</th><th>İstatistik</th><th>Son formasyonlar</th><th></th></tr>
                 </thead>
                 <tbody>
                   {scanRows.map((item) => {
@@ -1967,6 +2052,17 @@ export default function Home() {
                         <td>{item.last_price == null ? "—" : `₺${item.last_price.toFixed(2)}`}</td>
                         <td>{latest ? <><strong>{patternTurkish(latest.name)}</strong><small>{formatDate(latest.time)}</small></> : <span className="muted">Yeni sinyal yok</span>}</td>
                         <td>{latest ? <span className={`direction-badge ${directionClass(latest.direction)}`}>{directionText(latest.direction)}</span> : "—"}</td>
+                        <td className="scan-metrics">
+                          {item.confidence_v2 ? (
+                            <>
+                              <strong>{item.confidence_v2.score.toFixed(1)} · {item.confidence_v2.grade}</strong>
+                              <small>{item.confidence_v2.label ?? "V22 Güven"}</small>
+                              <small>{item.shadow_v22?.label ?? "Shadow —"}</small>
+                              <small>{item.market_context?.volume?.label ?? "Hacim —"}{item.market_context?.volume?.ratio != null ? ` · ${item.market_context.volume.ratio.toFixed(2)}x` : ""}</small>
+                              <small>{item.multi_timeframe?.confirmation?.label ?? "Üst zaman —"}</small>
+                            </>
+                          ) : <span className="muted">Yönlü V22 skoru yok</span>}
+                        </td>
                         <td>
                           <span className={`strength-badge ${strengthClass(item.signal_strength?.label)}`}>
                             {strengthText(item.signal_strength?.label)}
@@ -1992,7 +2088,7 @@ export default function Home() {
                 </tbody>
               </table>
             </div>
-            <p className="scanner-note">V18 Tarama V2: yön, formasyon, geçmiş güç, minimum başarı ve minimum örnek filtreleri aynı tarama sonucu üzerinde uygulanır; yeni API isteği oluşturmaz. “Güç” sıralaması yalnızca geçmiş kapanmış mum istatistiklerini özetler ve yatırım tavsiyesi değildir. Formasyonlar yalnızca kapanmış mumda onaylanır; Yahoo Finance verisinin gerçek zaman garantisi yoktur.</p>
+            <p className="scanner-note">V22.4 Tarama: V22 güven puanı, A+/A/B/C/D notu, rejim, hacim, üst zaman teyidi ve Shadow Mode sonucu aynı tarama içinde gösterilir. Shadow Mode gerçek işlem açmaz; yalnız yeni motorun kabul/izle/red kararını ölçer. “Güç” sıralaması yalnızca geçmiş kapanmış mum istatistiklerini özetler ve yatırım tavsiyesi değildir. Formasyonlar yalnızca kapanmış mumda onaylanır; Yahoo Finance verisinin gerçek zaman garantisi yoktur.</p>
           </section>
         ) : activeView === "watchlist" ? (
           <section className="wide-view panel favorites-view">

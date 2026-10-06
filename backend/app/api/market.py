@@ -2174,6 +2174,80 @@ def build_confidence_score(
 
 
 # =========================================================
+# V22.4 — SHADOW MODE KARAR KATMANI
+# =========================================================
+
+def build_shadow_decision(pattern, confidence_v2):
+    """V22 sinyalini gerçek Paper Trading'e dokunmadan sınıflandırır."""
+    if not pattern or pattern.get("direction") not in {"bullish", "bearish"}:
+        return {
+            "eligible": False,
+            "status": "none",
+            "label": "Yönlü Sinyal Yok",
+            "reason": "Shadow Mode yalnız yönlü kapanmış mum sinyallerini değerlendirir.",
+        }
+
+    confidence_v2 = confidence_v2 or {}
+    score = float(confidence_v2.get("score") or 0.0)
+    grade = confidence_v2.get("grade") or "D"
+    components = confidence_v2.get("components") or {}
+    history = components.get("historical_success") or {}
+    samples = int(history.get("samples") or 0)
+    success_rate = history.get("raw")
+    warnings = list(confidence_v2.get("warnings") or [])
+
+    if samples < MIN_BACKTEST_SAMPLES:
+        return {
+            "eligible": False,
+            "status": "reject",
+            "label": "Shadow Red",
+            "reason": f"Geçmiş örnek yetersiz: {samples}/{MIN_BACKTEST_SAMPLES}",
+            "score": score,
+            "grade": grade,
+            "samples": samples,
+            "success_rate": success_rate,
+        }
+
+    if score >= 75 and grade in {"A+", "A"}:
+        return {
+            "eligible": True,
+            "status": "accept",
+            "label": "Shadow Kabul",
+            "reason": "V22 güven skoru ve örnek sayısı güçlü.",
+            "score": score,
+            "grade": grade,
+            "samples": samples,
+            "success_rate": success_rate,
+            "warnings": warnings,
+        }
+
+    if score >= 65 and grade == "B":
+        return {
+            "eligible": False,
+            "status": "watch",
+            "label": "Shadow İzle",
+            "reason": "Sinyal kullanılabilir ama V22 ana eşiğinin altında.",
+            "score": score,
+            "grade": grade,
+            "samples": samples,
+            "success_rate": success_rate,
+            "warnings": warnings,
+        }
+
+    return {
+        "eligible": False,
+        "status": "reject",
+        "label": "Shadow Red",
+        "reason": "V22 güven skoru Paper Trading için zayıf.",
+        "score": score,
+        "grade": grade,
+        "samples": samples,
+        "success_rate": success_rate,
+        "warnings": warnings,
+    }
+
+
+# =========================================================
 # KATILIM 50 TOPLU FORMASYON TARAMASI
 # =========================================================
 
@@ -2307,6 +2381,10 @@ def scan_symbols(
                 multi_timeframe,
                 candles=candles,
             )
+            shadow_v22 = build_shadow_decision(
+                latest[-1] if latest else None,
+                confidence_v2,
+            )
 
             items.append({
                 "symbol": symbol,
@@ -2322,6 +2400,7 @@ def scan_symbols(
                 "context_alignment": context_alignment,
                 "multi_timeframe": multi_timeframe,
                 "confidence_v2": confidence_v2,
+                "shadow_v22": shadow_v22,
             })
 
         directional = {"bullish": 0, "bearish": 0, "neutral": 0}
@@ -2363,6 +2442,12 @@ def scan_symbols(
             "D": 0,
             "none": 0,
         }
+        shadow_counts = {
+            "accept": 0,
+            "watch": 0,
+            "reject": 0,
+            "none": 0,
+        }
         signal_count = 0
         for item in items:
             if item.get("latest_patterns"):
@@ -2389,6 +2474,9 @@ def scan_symbols(
                 confidence_grade_counts.get(confidence_grade, 0) + 1
             )
 
+            shadow_status = (item.get("shadow_v22") or {}).get("status", "none")
+            shadow_counts[shadow_status] = shadow_counts.get(shadow_status, 0) + 1
+
         result = {
             "timeframe": timeframe,
             "source": "Yahoo Finance",
@@ -2402,6 +2490,8 @@ def scan_symbols(
             "volume_counts": volume_counts,
             "multi_timeframe_counts": mtf_counts,
             "confidence_grade_counts": confidence_grade_counts,
+            "shadow_counts": shadow_counts,
+            "shadow_mode_version": "V22.4",
             "confirmation_timeframe": confirm_tf,
             "items": items,
             "fetched_at": int(time.time()),
@@ -2705,6 +2795,10 @@ def get_candles(
             multi_timeframe,
             candles=analysis_candles,
         )
+        shadow_v22 = build_shadow_decision(
+            current_patterns[-1] if current_patterns else None,
+            confidence_v2,
+        )
 
         result = {
             "symbol": symbol,
@@ -2750,6 +2844,9 @@ def get_candles(
 
             "confidence_v2":
                 confidence_v2,
+
+            "shadow_v22":
+                shadow_v22,
 
             "patterns":
                 patterns,

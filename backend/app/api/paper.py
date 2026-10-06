@@ -37,7 +37,7 @@ class PaperTradeModel(BaseModel):
     riskPct: float | None = None
     riskAmount: float | None = None
     signalScore: float | None = None
-    signalGrade: Literal["A", "B", "C", "D"] | None = None
+    signalGrade: Literal["A+", "A", "B", "C", "D"] | None = None
 
 
 class PaperTradeSyncRequest(BaseModel):
