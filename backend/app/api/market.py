@@ -1931,6 +1931,249 @@ def _batch_confirmation_context(batch: pd.DataFrame, ticker: str, confirm_tf: st
 
 
 # =========================================================
+# V22.3 — GÜVEN SKORU V2 + A+/A/B/C NOTU
+# =========================================================
+
+CONFIDENCE_WEIGHTS = {
+    "pattern_quality": 25,
+    "historical_success": 25,
+    "sample_size": 10,
+    "regime_alignment": 15,
+    "volume_confirmation": 10,
+    "multi_timeframe": 10,
+    "freshness": 5,
+}
+
+
+def _confidence_grade(score):
+    if score is None:
+        return None
+    score = float(score)
+    if score >= 85:
+        return "A+"
+    if score >= 75:
+        return "A"
+    if score >= 65:
+        return "B"
+    if score >= 55:
+        return "C"
+    return "D"
+
+
+def _signal_age_bars(candles, pattern_time):
+    """Formasyonun son kapanmış muma göre kaç kapanmış mum yaşında olduğunu bulur."""
+    if not candles or pattern_time is None:
+        return None
+
+    closed_times = [
+        int(c["time"])
+        for c in candles
+        if c.get("time") is not None
+    ]
+    if not closed_times:
+        return None
+
+    try:
+        idx = closed_times.index(int(pattern_time))
+    except ValueError:
+        # Tam eşleşme yoksa zamansal sıralamadan yaklaşık mum yaşını bul.
+        newer = [t for t in closed_times if t > int(pattern_time)]
+        return len(newer)
+
+    return max(0, len(closed_times) - 1 - idx)
+
+
+def build_confidence_score(
+    pattern,
+    historical_strength,
+    market_context,
+    context_alignment,
+    multi_timeframe,
+    candles=None,
+):
+    """
+    V22.3 birleşik sinyal güven puanı.
+
+    Puan yalnızca yönlü formasyonlar için üretilir. Bu bir getiri garantisi veya
+    al/sat emri değildir; tarama ve karşılaştırma amacıyla bağlamları tek skorda toplar.
+    """
+    if not pattern or pattern.get("direction") not in {"bullish", "bearish"}:
+        return None
+
+    components = {}
+
+    # 1) Formasyon geometrisi / kalite motoru — 25 puan.
+    pattern_quality = float(pattern.get("quality_score") or 0.0)
+    pattern_quality = max(0.0, min(pattern_quality, 100.0))
+    components["pattern_quality"] = {
+        "raw": round(pattern_quality, 1),
+        "weight": CONFIDENCE_WEIGHTS["pattern_quality"],
+        "points": round(pattern_quality * CONFIDENCE_WEIGHTS["pattern_quality"] / 100.0, 2),
+        "label": pattern.get("quality_label"),
+    }
+
+    # 2) Geçmiş başarı — 25 puan.
+    hs = historical_strength or {}
+    success_rate = hs.get("success_rate")
+    history_score = float(success_rate) if success_rate is not None else 0.0
+    history_score = max(0.0, min(history_score, 100.0))
+    components["historical_success"] = {
+        "raw": round(history_score, 1),
+        "weight": CONFIDENCE_WEIGHTS["historical_success"],
+        "points": round(history_score * CONFIDENCE_WEIGHTS["historical_success"] / 100.0, 2),
+        "samples": int(hs.get("samples") or 0),
+        "horizon": hs.get("horizon"),
+    }
+
+    # 3) Örneklem güveni — 10 puan. 60 örnekte tam kredi.
+    samples = int(hs.get("samples") or 0)
+    sample_score = min(samples / 60.0, 1.0) * 100.0
+    components["sample_size"] = {
+        "raw": round(sample_score, 1),
+        "weight": CONFIDENCE_WEIGHTS["sample_size"],
+        "points": round(sample_score * CONFIDENCE_WEIGHTS["sample_size"] / 100.0, 2),
+        "samples": samples,
+        "minimum_reliable": MIN_BACKTEST_SAMPLES,
+    }
+
+    # 4) Mevcut zaman dilimi rejim uyumu — 15 puan.
+    alignment_key = (context_alignment or {}).get("key")
+    alignment_scores = {
+        "aligned": 100.0,
+        "neutral_regime": 55.0,
+        "neutral": 50.0,
+        "counter_trend": 20.0,
+    }
+    regime_score = alignment_scores.get(alignment_key, 45.0)
+    components["regime_alignment"] = {
+        "raw": regime_score,
+        "weight": CONFIDENCE_WEIGHTS["regime_alignment"],
+        "points": round(regime_score * CONFIDENCE_WEIGHTS["regime_alignment"] / 100.0, 2),
+        "label": (context_alignment or {}).get("label"),
+        "regime": ((market_context or {}).get("regime") or {}).get("label"),
+    }
+
+    # 5) Hacim teyidi — 10 puan.
+    volume = ((market_context or {}).get("volume") or {})
+    volume_key = volume.get("key")
+    volume_scores = {
+        "strong": 100.0,
+        "supported": 85.0,
+        "normal": 55.0,
+        "weak": 25.0,
+        "unknown": 40.0,
+    }
+    volume_score = volume_scores.get(volume_key, 40.0)
+    components["volume_confirmation"] = {
+        "raw": volume_score,
+        "weight": CONFIDENCE_WEIGHTS["volume_confirmation"],
+        "points": round(volume_score * CONFIDENCE_WEIGHTS["volume_confirmation"] / 100.0, 2),
+        "label": volume.get("label"),
+        "ratio": volume.get("ratio"),
+    }
+
+    # 6) Üst zaman dilimi teyidi — 10 puan.
+    mtf_confirmation = ((multi_timeframe or {}).get("confirmation") or {})
+    mtf_key = mtf_confirmation.get("key")
+    mtf_scores = {
+        "confirmed": 100.0,
+        "neutral_higher": 55.0,
+        "neutral_pattern": 50.0,
+        "conflict": 15.0,
+        "unavailable": 40.0,
+    }
+    mtf_score = mtf_scores.get(mtf_key, 40.0)
+    components["multi_timeframe"] = {
+        "raw": mtf_score,
+        "weight": CONFIDENCE_WEIGHTS["multi_timeframe"],
+        "points": round(mtf_score * CONFIDENCE_WEIGHTS["multi_timeframe"] / 100.0, 2),
+        "label": mtf_confirmation.get("label"),
+        "timeframe": mtf_confirmation.get("timeframe"),
+        "higher_regime": mtf_confirmation.get("higher_regime"),
+    }
+
+    # 7) Sinyal tazeliği — 5 puan.
+    age_bars = _signal_age_bars(candles or [], pattern.get("time"))
+    if age_bars is None:
+        freshness_score = 70.0
+    else:
+        # Yeni sinyal 100; her kapanmış mumda 18 puan azalır, 5'te sıfırlanır.
+        freshness_score = max(0.0, 100.0 - (age_bars * 18.0))
+    components["freshness"] = {
+        "raw": round(freshness_score, 1),
+        "weight": CONFIDENCE_WEIGHTS["freshness"],
+        "points": round(freshness_score * CONFIDENCE_WEIGHTS["freshness"] / 100.0, 2),
+        "age_bars": age_bars,
+    }
+
+    score = round(sum(float(c["points"]) for c in components.values()), 1)
+
+    # Tarihsel örnek yoksa A/A+ gibi yüksek not üretme.
+    if samples < MIN_BACKTEST_SAMPLES:
+        score = min(score, 74.9)
+
+    # Üst zaman açıkça çelişiyorsa A+ üretilmesin.
+    if mtf_key == "conflict":
+        score = min(score, 84.9)
+
+    # Trende ters ve hacim de zayıfsa güçlü notu sınırlayalım.
+    if alignment_key == "counter_trend" and volume_key == "weak":
+        score = min(score, 69.9)
+
+    score = round(max(0.0, min(score, 100.0)), 1)
+    grade = _confidence_grade(score)
+
+    positives = []
+    warnings = []
+
+    if pattern_quality >= 80:
+        positives.append("Formasyon geometrisi güçlü")
+    if success_rate is not None and float(success_rate) >= 60:
+        positives.append(f"Geçmiş başarı %{float(success_rate):.1f}")
+    if samples >= MIN_BACKTEST_SAMPLES:
+        positives.append(f"Yeterli geçmiş örnek: {samples}")
+    else:
+        warnings.append(f"Geçmiş örnek az: {samples}/{MIN_BACKTEST_SAMPLES}")
+    if alignment_key == "aligned":
+        positives.append("Mevcut trend ile uyumlu")
+    elif alignment_key == "counter_trend":
+        warnings.append("Mevcut trende ters")
+    if volume_key in {"supported", "strong"}:
+        ratio = volume.get("ratio")
+        positives.append(
+            f"Hacim teyitli{f' ({ratio}x)' if ratio is not None else ''}"
+        )
+    elif volume_key == "weak":
+        warnings.append("Hacim zayıf")
+    if mtf_key == "confirmed":
+        positives.append(
+            f"{mtf_confirmation.get('timeframe') or 'Üst zaman'} teyitli"
+        )
+    elif mtf_key == "conflict":
+        warnings.append("Üst zaman dilimi ile çelişkili")
+
+    return {
+        "version": "V2",
+        "score": score,
+        "grade": grade,
+        "label": {
+            "A+": "Çok Güçlü",
+            "A": "Güçlü",
+            "B": "İyi",
+            "C": "Orta",
+            "D": "Zayıf",
+        }.get(grade, "Bilinmiyor"),
+        "pattern_name": pattern.get("name"),
+        "direction": pattern.get("direction"),
+        "components": components,
+        "positives": positives,
+        "warnings": warnings,
+        "minimum_reliable_samples": MIN_BACKTEST_SAMPLES,
+        "disclaimer": "Güven skoru tarihsel ve teknik bağlam puanıdır; getiri garantisi değildir.",
+    }
+
+
+# =========================================================
 # KATILIM 50 TOPLU FORMASYON TARAMASI
 # =========================================================
 
@@ -2056,6 +2299,14 @@ def scan_symbols(
                 latest[-1] if latest else None,
                 higher_context_result,
             )
+            confidence_v2 = build_confidence_score(
+                latest[-1] if latest else None,
+                signal_strength,
+                market_context,
+                context_alignment,
+                multi_timeframe,
+                candles=candles,
+            )
 
             items.append({
                 "symbol": symbol,
@@ -2070,6 +2321,7 @@ def scan_symbols(
                 "market_context": market_context,
                 "context_alignment": context_alignment,
                 "multi_timeframe": multi_timeframe,
+                "confidence_v2": confidence_v2,
             })
 
         directional = {"bullish": 0, "bearish": 0, "neutral": 0}
@@ -2103,6 +2355,14 @@ def scan_symbols(
             "unavailable": 0,
             "none": 0,
         }
+        confidence_grade_counts = {
+            "A+": 0,
+            "A": 0,
+            "B": 0,
+            "C": 0,
+            "D": 0,
+            "none": 0,
+        }
         signal_count = 0
         for item in items:
             if item.get("latest_patterns"):
@@ -2123,6 +2383,12 @@ def scan_symbols(
             mtf_key = (mtf_confirmation or {}).get("key", "none")
             mtf_counts[mtf_key] = mtf_counts.get(mtf_key, 0) + 1
 
+            confidence = item.get("confidence_v2") or {}
+            confidence_grade = confidence.get("grade", "none")
+            confidence_grade_counts[confidence_grade] = (
+                confidence_grade_counts.get(confidence_grade, 0) + 1
+            )
+
         result = {
             "timeframe": timeframe,
             "source": "Yahoo Finance",
@@ -2135,6 +2401,7 @@ def scan_symbols(
             "regime_counts": regime_counts,
             "volume_counts": volume_counts,
             "multi_timeframe_counts": mtf_counts,
+            "confidence_grade_counts": confidence_grade_counts,
             "confirmation_timeframe": confirm_tf,
             "items": items,
             "fetched_at": int(time.time()),
@@ -2409,10 +2676,34 @@ def get_candles(
             })
 
         market_context = analyze_market_context(analysis_candles, timeframe)
+        current_pattern_context = (
+            pattern_context_alignment(
+                current_patterns[-1],
+                market_context,
+            )
+            if current_patterns
+            else None
+        )
         higher_context_result = fetch_confirmation_context(symbol, timeframe)
         multi_timeframe = build_multi_timeframe_payload(
             current_patterns[-1] if current_patterns else None,
             higher_context_result,
+        )
+        current_signal_strength = (
+            _historical_signal_strength(
+                backtest_result,
+                current_patterns,
+            )
+            if current_patterns and backtest_result is not None
+            else None
+        )
+        confidence_v2 = build_confidence_score(
+            current_patterns[-1] if current_patterns else None,
+            current_signal_strength,
+            market_context,
+            current_pattern_context,
+            multi_timeframe,
+            candles=analysis_candles,
         )
 
         result = {
@@ -2449,17 +2740,16 @@ def get_candles(
                 market_context,
 
             "current_pattern_context":
-                (
-                    pattern_context_alignment(
-                        current_patterns[-1],
-                        market_context,
-                    )
-                    if current_patterns
-                    else None
-                ),
+                current_pattern_context,
 
             "multi_timeframe":
                 multi_timeframe,
+
+            "current_signal_strength":
+                current_signal_strength,
+
+            "confidence_v2":
+                confidence_v2,
 
             "patterns":
                 patterns,
