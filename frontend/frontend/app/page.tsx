@@ -1050,6 +1050,14 @@ export default function Home() {
   }, [activeView, selected, timeframe, statsWindow]);
 
   const latestPattern = patterns.length ? patterns[patterns.length - 1] : null;
+  const currentV22Confidence = (marketSnapshot as MarketSnapshot & {
+    confidence_v2?: ConfidenceV2 | null;
+    shadow_v22?: ShadowDecision | null;
+  } | null)?.confidence_v2 ?? null;
+  const currentV22Shadow = (marketSnapshot as MarketSnapshot & {
+    confidence_v2?: ConfidenceV2 | null;
+    shadow_v22?: ShadowDecision | null;
+  } | null)?.shadow_v22 ?? null;
   const recentPatterns = [...patterns].reverse().slice(0, 4);
   const last30 = patterns.slice(-30);
 
@@ -1491,7 +1499,7 @@ export default function Home() {
           </div>
           <div>
             <h1>BIST Mum Formasyon Sistemi</h1>
-            <p>BIST Katılım 50 mum formasyonu tarama</p>
+            <p>BIST Katılım 50 mum formasyonu tarama · V23 Stable</p>
           </div>
         </div>
 
@@ -1745,6 +1753,25 @@ export default function Home() {
                   <span>Geçmiş başarı</span>
                   <strong>{confidenceText}</strong>
                 </div>
+
+                {currentV22Confidence ? (
+                  <div className="v23-signal-explain">
+                    <div className="v23-signal-score">
+                      <span>V22 Güven</span>
+                      <strong>{currentV22Confidence.score.toFixed(1)} · {currentV22Confidence.grade}</strong>
+                      <em>{currentV22Confidence.label ?? "Sinyal"}</em>
+                    </div>
+                    <div className="v23-signal-reasons">
+                      {(currentV22Confidence.positives ?? []).slice(0, 3).map((item) => (
+                        <small className="positive" key={`positive-${item}`}>✓ {item}</small>
+                      ))}
+                      {(currentV22Confidence.warnings ?? []).slice(0, 2).map((item) => (
+                        <small className="warning" key={`warning-${item}`}>! {item}</small>
+                      ))}
+                      {currentV22Shadow?.label ? <small>Shadow: {currentV22Shadow.label}</small> : null}
+                    </div>
+                  </div>
+                ) : null}
               </>
             ) : (
               <p className="empty-text">Formasyon bekleniyor...</p>
@@ -2060,6 +2087,11 @@ export default function Home() {
                               <small>{item.shadow_v22?.label ?? "Shadow —"}</small>
                               <small>{item.market_context?.volume?.label ?? "Hacim —"}{item.market_context?.volume?.ratio != null ? ` · ${item.market_context.volume.ratio.toFixed(2)}x` : ""}</small>
                               <small>{item.multi_timeframe?.confirmation?.label ?? "Üst zaman —"}</small>
+                              {(item.confidence_v2.positives?.[0] || item.confidence_v2.warnings?.[0]) ? (
+                                <small className="v23-scan-explain">
+                                  {item.confidence_v2.positives?.[0] ?? item.confidence_v2.warnings?.[0]}
+                                </small>
+                              ) : null}
                             </>
                           ) : <span className="muted">Yönlü V22 skoru yok</span>}
                         </td>
@@ -2155,8 +2187,8 @@ export default function Home() {
           <section className="wide-view panel paper-v2-view">
             <div className="wide-view-header">
               <div>
-                <h2>Paper Trading V3</h2>
-                <p>Gerçek emir göndermez. Risk bazlı lot hesabı, güvenilir sinyal filtresi, drawdown ve Profit Factor ile stratejiyi ölç.</p>
+                <h2>Paper Trading · V23 Stable</h2>
+                <p>Gerçek emir göndermez. V22 güven skoru, risk bazlı lot hesabı, drawdown ve Profit Factor ile stratejiyi güvenli biçimde ölçer.</p>
               </div>
               <div className="paper-v2-actions">
                 <button className={`paper-toggle ${paperEnabled ? "active" : ""}`} onClick={() => setPaperEnabled((v) => !v)}>{paperEnabled ? "Otomatik Açık" : "Otomatik Kapalı"}</button>
@@ -2170,6 +2202,7 @@ export default function Home() {
               <label><span>İşlem Riski</span><div className="paper-allocation-input"><input type="number" min="0.1" max="5" step="0.1" value={paperRiskPct} onChange={(e) => setPaperRiskPct(clamp(Number(e.target.value) || 0.1, 0.1, 5))}/><b>%</b></div></label>
               <label><span>Min. Başarı</span><div className="paper-allocation-input"><input type="number" min="50" max="90" step="1" value={paperMinSuccess} onChange={(e) => setPaperMinSuccess(clamp(Number(e.target.value) || 50, 50, 90))}/><b>%</b></div></label>
               <label><span>Min. Örnek</span><input type="number" min="10" max="200" step="5" value={paperMinSamples} onChange={(e) => setPaperMinSamples(clamp(Number(e.target.value) || 10, 10, 200))}/></label>
+              <div className="v23-fixed-setting"><span>Min. V22 Güven</span><strong>{paperMinV22Score} · B+</strong><small>A+ / A / B sinyaller değerlendirilir</small></div>
               <div><span>Hesap Bakiye</span><strong>₺{paperSummary.balance.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
               <div><span>Kullanılabilir</span><strong>₺{paperSummary.availableCash.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
               <div><span>Açık Risk</span><strong>₺{paperSummary.openRisk.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
@@ -2194,7 +2227,7 @@ export default function Home() {
                     <line x1="0" y1="60" x2="600" y2="60" className="paper-zero-line"/>
                     <polyline points={paperPerformance.points} fill="none" className={paperPerformance.equity >= paperInitialBalance ? "paper-equity-line positive-line" : "paper-equity-line negative-line"}/>
                   </svg>
-                ) : <div className="paper-v2-empty">Henüz kapanmış sanal işlem yok.</div>}
+                ) : <div className="paper-v2-empty">Henüz kapanmış sanal işlem yok. V22 filtresini geçen ilk işlemler burada performans eğrisi oluşturacak.</div>}
               </article>
 
               <article className="paper-v2-card">
@@ -2211,7 +2244,7 @@ export default function Home() {
                       <div><span>Risk</span><strong>{trade.riskAmount != null ? `₺${trade.riskAmount.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}` : "—"}</strong></div>
                       <div><span>Sinyal</span><strong>{trade.signalGrade ?? "—"}{trade.signalScore != null ? ` · ${trade.signalScore.toFixed(1)}` : ""}</strong></div>
                     </div>
-                  )) : <div className="paper-v2-empty">Açık sanal pozisyon yok.</div>}
+                  )) : <div className="paper-v2-empty">Açık sanal pozisyon yok. Sistem yalnız V22 skoru ≥ 65 olan A+/A/B yönlü sinyalleri değerlendirir.</div>}
                 </div>
               </article>
             </div>
@@ -2230,7 +2263,7 @@ export default function Home() {
                         <td>{row.profitFactor == null ? "∞" : row.profitFactor.toFixed(2)}</td>
                         <td><strong className={row.pnl >= 0 ? "positive" : "negative"}>{row.pnl >= 0 ? "+" : ""}₺{row.pnl.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></td>
                       </tr>
-                    )) : <tr><td colSpan={5}><div className="paper-v2-empty">Formasyon performansı için kapanmış sanal işlem bekleniyor.</div></td></tr>}
+                    )) : <tr><td colSpan={5}><div className="paper-v2-empty">Formasyon performansı için V22 filtresinden geçen kapanmış sanal işlem bekleniyor.</div></td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -2253,13 +2286,13 @@ export default function Home() {
                         <td>{paperStatusText(trade.status)}</td>
                         <td><strong className={(trade.pnlPct ?? 0) >= 0 ? "positive" : "negative"}>{trade.pnlPct == null ? "—" : `${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%`}{trade.pnlAmount != null ? <small>{trade.pnlAmount >= 0 ? "+" : ""}₺{trade.pnlAmount.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</small> : null}</strong></td>
                       </tr>
-                    )) : <tr><td colSpan={11}><div className="paper-v2-empty">Henüz sanal işlem kaydı yok. Otomatik Paper Trading açıkken yeterli geçmiş veriye sahip yönlü formasyon beklenir.</div></td></tr>}
+                    )) : <tr><td colSpan={11}><div className="paper-v2-empty">Henüz sanal işlem kaydı yok. Otomatik Paper Trading açıkken V22 güven filtresini ve geçmiş veri koşullarını geçen yönlü formasyon beklenir.</div></td></tr>}
                   </tbody>
                 </table>
               </div>
             </article>
 
-            <p className="scanner-note">V20 Paper Trading V3 yalnızca simülasyondur; gerçek emir göndermez. Lot, stop mesafesi ve işlem başına risk bütçesine göre hesaplanır; maksimum pozisyon yüzdesi ayrıca sermaye kullanımını sınırlar. İşlem yalnız en az iki ufukta yeterli örnek, pozitif yönsel hareket ve seçilen minimum geçmiş başarı koşulu varsa açılır. Geçmiş sonuçlar gelecekteki getiriyi garanti etmez.</p>
+            <p className="scanner-note">V23 Stable Paper Trading yalnızca simülasyondur; gerçek emir göndermez. Yeni işlem için V22 güven skoru en az 65 olmalı ve not A+, A veya B olmalıdır. Geçmiş başarı, örnek sayısı, lot, stop, risk bütçesi ve maksimum pozisyon kontrolleri ayrıca korunur. Shadow Mode gerçek işlem açmaz; yeni V22 motorunun kararlarını karşılaştırmak için kullanılır. Geçmiş sonuçlar gelecekteki getiriyi garanti etmez.</p>
           </section>
         ) : activeView === "notifications" ? (
           <section className="wide-view panel notifications-view">
