@@ -1924,6 +1924,21 @@ CONFIDENCE_WEIGHTS = {
     "freshness": 5,
 }
 
+def _confidence_grade(score):
+    if score is None:
+        return None
+    score = float(score)
+    if score >= 85:
+        return "A+"
+    if score >= 75:
+        return "A"
+    if score >= 65:
+        return "B"
+    if score >= 55:
+        return "C"
+    return "D"
+
+
 def build_confidence_score(
     pattern,
     historical_strength,
