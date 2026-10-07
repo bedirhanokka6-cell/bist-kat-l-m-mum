@@ -376,7 +376,6 @@ export default function Home() {
   const [paperRiskPct, setPaperRiskPct] = useState(1);
   const [paperMinSuccess, setPaperMinSuccess] = useState(58);
   const [paperMinSamples, setPaperMinSamples] = useState(25);
-  const [paperMinV22Score] = useState(65);
   const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<"unsupported" | "default" | "granted" | "denied">("default");
   const [notificationEvents, setNotificationEvents] = useState<NotificationEvent[]>([]);
@@ -847,11 +846,6 @@ export default function Home() {
           );
 
           for (const pattern of candidates) {
-            const v22 = signalMeta?.symbol === marketSnapshot.symbol && signalMeta?.timeframe === marketSnapshot.timeframe
-              ? signalMeta.confidenceV2
-              : null;
-            if (!v22 || v22.score < paperMinV22Score || !["A+", "A", "B"].includes(v22.grade)) continue;
-
             const duplicate = nextTrades.some(
               (trade) => trade.symbol === marketSnapshot.symbol && trade.timeframe === marketSnapshot.timeframe && trade.entryTime === pattern.time && trade.patternName === pattern.name
             );
@@ -878,9 +872,6 @@ export default function Home() {
               .sort((a, b) => (b.metric.success_rate ?? 0) - (a.metric.success_rate ?? 0))[0];
 
             if (!best || positiveHorizons < 2) continue;
-
-            const signalScore = v22.score;
-            const signalGrade: "A+" | "A" | "B" | "C" | "D" = v22.grade;
 
             const targetPct = clamp(best.metric.avg_mfe_pct ?? 1.5, 0.6, 4);
             const stopPct = clamp(Math.abs(best.metric.avg_mae_pct ?? -1), 0.5, 3);
@@ -926,8 +917,6 @@ export default function Home() {
               pnlAmount: 0,
               riskPct: paperRiskPct,
               riskAmount,
-              signalScore,
-              signalGrade,
             });
             changed = true;
             break;
@@ -937,7 +926,7 @@ export default function Home() {
 
       return changed ? nextTrades.slice(0, 200) : currentTrades;
     });
-  }, [marketSnapshot, backtest, signalMeta, paperEnabled, paperLoaded, paperInitialBalance, paperAllocationPct, paperRiskPct, paperMinSuccess, paperMinSamples, paperMinV22Score]);
+  }, [marketSnapshot, backtest, paperEnabled, paperLoaded, paperInitialBalance, paperAllocationPct, paperRiskPct, paperMinSuccess, paperMinSamples]);
 
   useEffect(() => {
     if (!notifyEnabled || notificationStatus !== "granted" || !marketSnapshot || !backtest) return;
@@ -2219,7 +2208,7 @@ export default function Home() {
               <label><span>İşlem Riski</span><div className="paper-allocation-input"><input type="number" min="0.1" max="5" step="0.1" value={paperRiskPct} onChange={(e) => setPaperRiskPct(clamp(Number(e.target.value) || 0.1, 0.1, 5))}/><b>%</b></div></label>
               <label><span>Min. Başarı</span><div className="paper-allocation-input"><input type="number" min="50" max="90" step="1" value={paperMinSuccess} onChange={(e) => setPaperMinSuccess(clamp(Number(e.target.value) || 50, 50, 90))}/><b>%</b></div></label>
               <label><span>Min. Örnek</span><input type="number" min="10" max="200" step="5" value={paperMinSamples} onChange={(e) => setPaperMinSamples(clamp(Number(e.target.value) || 10, 10, 200))}/></label>
-              <div className="v23-fixed-setting"><span>Min. V22 Güven</span><strong>{paperMinV22Score} · B+</strong><small>A+ / A / B sinyaller değerlendirilir</small></div>
+              <div className="v23-fixed-setting"><span>V22 Güven Filtresi</span><strong>Kapalı</strong><small>Paper Trading için zorunlu değil</small></div>
               <div><span>Hesap Bakiye</span><strong>₺{paperSummary.balance.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
               <div><span>Kullanılabilir</span><strong>₺{paperSummary.availableCash.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
               <div><span>Açık Risk</span><strong>₺{paperSummary.openRisk.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></div>
@@ -2244,7 +2233,7 @@ export default function Home() {
                     <line x1="0" y1="60" x2="600" y2="60" className="paper-zero-line"/>
                     <polyline points={paperPerformance.points} fill="none" className={paperPerformance.equity >= paperInitialBalance ? "paper-equity-line positive-line" : "paper-equity-line negative-line"}/>
                   </svg>
-                ) : <div className="paper-v2-empty">Henüz kapanmış sanal işlem yok. V22 filtresini geçen ilk işlemler burada performans eğrisi oluşturacak.</div>}
+                ) : <div className="paper-v2-empty">Henüz kapanmış sanal işlem yok. Geçmiş başarı ve örnek koşullarını geçen ilk yönlü işlemler burada performans eğrisi oluşturacak.</div>}
               </article>
 
               <article className="paper-v2-card">
@@ -2259,9 +2248,9 @@ export default function Home() {
                       <div><span>Hedef</span><strong className="positive">₺{trade.targetPrice.toFixed(2)}</strong></div>
                       <div><span>Stop</span><strong className="negative">₺{trade.stopPrice.toFixed(2)}</strong></div>
                       <div><span>Risk</span><strong>{trade.riskAmount != null ? `₺${trade.riskAmount.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}` : "—"}</strong></div>
-                      <div><span>Sinyal</span><strong>{trade.signalGrade ?? "—"}{trade.signalScore != null ? ` · ${trade.signalScore.toFixed(1)}` : ""}</strong></div>
+                      <div><span>Geçmiş başarı</span><strong>%{trade.backtestRate.toFixed(1)} · n={trade.samples}</strong></div>
                     </div>
-                  )) : <div className="paper-v2-empty">Açık sanal pozisyon yok. Sistem yalnız V22 skoru ≥ 65 olan A+/A/B yönlü sinyalleri değerlendirir.</div>}
+                  )) : <div className="paper-v2-empty">Açık sanal pozisyon yok. Sistem yönlü formasyonun geçmiş başarı ve minimum örnek koşullarını geçmesini bekliyor.</div>}
                 </div>
               </article>
             </div>
@@ -2280,7 +2269,7 @@ export default function Home() {
                         <td>{row.profitFactor == null ? "∞" : row.profitFactor.toFixed(2)}</td>
                         <td><strong className={row.pnl >= 0 ? "positive" : "negative"}>{row.pnl >= 0 ? "+" : ""}₺{row.pnl.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</strong></td>
                       </tr>
-                    )) : <tr><td colSpan={5}><div className="paper-v2-empty">Formasyon performansı için V22 filtresinden geçen kapanmış sanal işlem bekleniyor.</div></td></tr>}
+                    )) : <tr><td colSpan={5}><div className="paper-v2-empty">Formasyon performansı için geçmiş başarı ve örnek koşullarını geçen kapanmış sanal işlem bekleniyor.</div></td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -2296,20 +2285,20 @@ export default function Home() {
                       <tr key={trade.id}>
                         <td><strong>{trade.symbol}</strong><small>{timeframeLabel(trade.timeframe)}</small></td>
                         <td>{patternTurkish(trade.patternName)}<small>geçmiş %{trade.backtestRate.toFixed(1)} · n={trade.samples}</small></td>
-                        <td>{trade.signalGrade ?? "—"}{trade.signalScore != null ? <small>{trade.signalScore.toFixed(1)} puan</small> : null}</td>
+                        <td>%{trade.backtestRate.toFixed(1)}<small>n={trade.samples}</small></td>
                         <td><span className={`direction-badge compact ${directionClass(trade.direction)}`}>{directionText(trade.direction)}</span></td>
                         <td>₺{trade.entryPrice.toFixed(2)}</td><td>₺{trade.targetPrice.toFixed(2)}</td><td>₺{trade.stopPrice.toFixed(2)}</td>
                         <td>{trade.quantity ?? "—"}</td><td>{trade.riskAmount != null ? `₺${trade.riskAmount.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}` : "—"}</td>
                         <td>{paperStatusText(trade.status)}</td>
                         <td><strong className={(trade.pnlPct ?? 0) >= 0 ? "positive" : "negative"}>{trade.pnlPct == null ? "—" : `${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%`}{trade.pnlAmount != null ? <small>{trade.pnlAmount >= 0 ? "+" : ""}₺{trade.pnlAmount.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}</small> : null}</strong></td>
                       </tr>
-                    )) : <tr><td colSpan={11}><div className="paper-v2-empty">Henüz sanal işlem kaydı yok. Otomatik Paper Trading açıkken V22 güven filtresini ve geçmiş veri koşullarını geçen yönlü formasyon beklenir.</div></td></tr>}
+                    )) : <tr><td colSpan={11}><div className="paper-v2-empty">Henüz sanal işlem kaydı yok. Otomatik Paper Trading açıkken geçmiş başarı ve minimum örnek koşullarını geçen yönlü formasyon beklenir.</div></td></tr>}
                   </tbody>
                 </table>
               </div>
             </article>
 
-            <p className="scanner-note">V23 Stable Paper Trading yalnızca simülasyondur; gerçek emir göndermez. Yeni işlem için V22 güven skoru en az 65 olmalı ve not A+, A veya B olmalıdır. Geçmiş başarı, örnek sayısı, lot, stop, risk bütçesi ve maksimum pozisyon kontrolleri ayrıca korunur. Shadow Mode gerçek işlem açmaz; yeni V22 motorunun kararlarını karşılaştırmak için kullanılır. Geçmiş sonuçlar gelecekteki getiriyi garanti etmez.</p>
+            <p className="scanner-note">V23.1.3 Paper Trading yalnızca simülasyondur; gerçek emir göndermez. V22 güven skoru Paper Trading için zorunlu filtre değildir; tarama ekranında bilgi amaçlı kalır. Yeni sanal işlem için yönlü formasyon, seçilen minimum geçmiş başarı, minimum örnek sayısı, risk bütçesi, lot, stop ve maksimum pozisyon kontrolleri korunur. Geçmiş sonuçlar gelecekteki getiriyi garanti etmez.</p>
           </section>
         ) : activeView === "notifications" ? (
           <section className="wide-view panel notifications-view">
